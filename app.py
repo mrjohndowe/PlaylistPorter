@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import subprocess
 import sys
 import threading
@@ -12,14 +13,16 @@ import tkinter as tk
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 APP_NAME = "Playlist Porter"
 SETTINGS_FILE = Path(os.getenv("APPDATA", Path.home())) / "PlaylistPorter" / "settings.json"
 INVALID_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 SPOTIFY_PLAYLIST_RE = re.compile(r"(?:open\.spotify\.com/playlist/|spotify:playlist:)([A-Za-z0-9]+)")
+SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 
 @dataclass
@@ -60,6 +63,7 @@ class Settings:
         self.destination = ""
         self.spotify_client_id = ""
         self.spotify_client_secret = ""
+        self.spotify_refresh_token = ""
         self.load()
 
     def load(self) -> None:
@@ -68,6 +72,7 @@ class Settings:
             self.destination = data.get("destination", "")
             self.spotify_client_id = data.get("spotify_client_id", "")
             self.spotify_client_secret = data.get("spotify_client_secret", "")
+            self.spotify_refresh_token = data.get("spotify_refresh_token", "")
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
 
@@ -103,15 +108,83 @@ class PlaylistService:
 
         if not self.settings.spotify_client_id or not self.settings.spotify_client_secret:
             raise ValueError("Add Spotify Client ID and Client Secret in Settings before using Spotify links.")
+        if self.settings.spotify_refresh_token:
+            response = requests.post(
+                "https://accounts.spotify.com/api/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": self.settings.spotify_refresh_token,
+                    "client_id": self.settings.spotify_client_id,
+                },
+                auth=(self.settings.spotify_client_id, self.settings.spotify_client_secret),
+                timeout=20,
+            )
+            if response.status_code == 200:
+                payload = response.json()
+                if payload.get("refresh_token"):
+                    self.settings.spotify_refresh_token = payload["refresh_token"]
+                    self.settings.save()
+                return payload["access_token"]
+            self.settings.spotify_refresh_token = ""
+            self.settings.save()
+
+        self.status("Opening Spotify sign-in in your browser…")
+        state = secrets.token_urlsafe(24)
+        callback: dict[str, str] = {}
+
+        class CallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(handler_self) -> None:
+                query = parse_qs(urlparse(handler_self.path).query)
+                callback["code"] = query.get("code", [""])[0]
+                callback["state"] = query.get("state", [""])[0]
+                callback["error"] = query.get("error", [""])[0]
+                body = b"<html><body style='font-family:sans-serif;padding:40px'><h2>Spotify connected</h2><p>You can close this window and return to Playlist Porter.</p></body></html>"
+                handler_self.send_response(200)
+                handler_self.send_header("Content-Type", "text/html; charset=utf-8")
+                handler_self.send_header("Content-Length", str(len(body)))
+                handler_self.end_headers()
+                handler_self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        try:
+            server = HTTPServer(("127.0.0.1", 8888), CallbackHandler)
+        except OSError as exc:
+            raise ValueError("Spotify sign-in could not start because local port 8888 is already in use.") from exc
+        server.timeout = 180
+        authorize_url = "https://accounts.spotify.com/authorize?" + urlencode({
+            "client_id": self.settings.spotify_client_id,
+            "response_type": "code",
+            "redirect_uri": SPOTIFY_REDIRECT_URI,
+            "scope": "playlist-read-private",
+            "state": state,
+            "show_dialog": "true",
+        })
+        webbrowser.open(authorize_url)
+        server.handle_request()
+        server.server_close()
+        if callback.get("error"):
+            raise ValueError(f"Spotify sign-in was not approved: {callback['error']}.")
+        if not callback.get("code") or callback.get("state") != state:
+            raise ValueError("Spotify sign-in did not complete or the security check failed.")
+
         raw = f"{self.settings.spotify_client_id}:{self.settings.spotify_client_secret}".encode()
         response = requests.post(
             "https://accounts.spotify.com/api/token",
             headers={"Authorization": "Basic " + base64.b64encode(raw).decode()},
-            data={"grant_type": "client_credentials"}, timeout=20,
+            data={
+                "grant_type": "authorization_code",
+                "code": callback["code"],
+                "redirect_uri": SPOTIFY_REDIRECT_URI,
+            }, timeout=20,
         )
         if response.status_code != 200:
-            raise ValueError("Spotify rejected the credentials. Check them in Settings.")
-        return response.json()["access_token"]
+            raise ValueError("Spotify could not finish connecting the account. Check the app credentials and Redirect URI.")
+        payload = response.json()
+        self.settings.spotify_refresh_token = payload.get("refresh_token", "")
+        self.settings.save()
+        return payload["access_token"]
 
     def _inspect_spotify(self, url: str) -> Playlist:
         import requests
@@ -124,16 +197,20 @@ class PlaylistService:
         playlist_id = match.group(1)
         response = requests.get(
             f"https://api.spotify.com/v1/playlists/{playlist_id}",
-            headers=headers, params={"fields": "name,tracks.items(track(name,artists(name))),tracks.next"}, timeout=20,
+            headers=headers, timeout=20,
         )
+        if response.status_code == 403:
+            raise ValueError("Spotify now allows playlist tracks only when the signed-in user owns the playlist or is a collaborator.")
         if response.status_code != 200:
-            raise ValueError("Spotify could not open that playlist. Make sure it is public.")
+            raise ValueError(f"Spotify could not open that playlist (HTTP {response.status_code}). Check the link and account access.")
         data = response.json()
         tracks: list[Track] = []
-        page = data["tracks"]
+        page = data.get("items") or data.get("tracks")
+        if not isinstance(page, dict):
+            raise ValueError("Spotify returned the playlist name but withheld its tracks. Sign in as the playlist owner or a collaborator.")
         while True:
             for item in page.get("items", []):
-                track = item.get("track")
+                track = item.get("item") or item.get("track")
                 if track and track.get("name"):
                     tracks.append(Track(track["name"], ", ".join(a["name"] for a in track.get("artists", []))))
             next_url = page.get("next")
@@ -199,7 +276,7 @@ class App(tk.Tk):
         outer = ttk.Frame(self, padding=28)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="Playlist Porter", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(outer, text="Turn a public playlist into an organized local MP3 folder.", style="Sub.TLabel").pack(anchor="w", pady=(2, 22))
+        ttk.Label(outer, text="Turn an accessible playlist into an organized local MP3 folder.", style="Sub.TLabel").pack(anchor="w", pady=(2, 22))
         link_row = ttk.Frame(outer)
         link_row.pack(fill="x")
         self.url = tk.StringVar()
@@ -213,7 +290,7 @@ class App(tk.Tk):
         ttk.Label(destination_row, textvariable=self.destination_text).pack(side="left", fill="x", expand=True)
         ttk.Button(destination_row, text="Change folder", command=self.choose_destination).pack(side="right")
         ttk.Button(destination_row, text="Settings", command=self.open_settings).pack(side="right", padx=8)
-        self.summary = tk.StringVar(value="Paste a Spotify or YouTube playlist link to begin.")
+        self.summary = tk.StringVar(value="Paste a YouTube playlist or a Spotify playlist you own or collaborate on.")
         ttk.Label(outer, textvariable=self.summary, wraplength=760).pack(anchor="w", pady=(4, 8))
         list_frame = ttk.Frame(outer)
         list_frame.pack(fill="both", expand=True)
@@ -249,7 +326,7 @@ class App(tk.Tk):
         frame = ttk.Frame(dialog, padding=22)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Spotify API credentials", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(frame, text="Needed only for Spotify playlists. Create an app at developer.spotify.com.", wraplength=480).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 14))
+        ttk.Label(frame, text=f"Needed only for Spotify playlists. Register {SPOTIFY_REDIRECT_URI} as the Redirect URI.", wraplength=480).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 14))
         client_id = tk.StringVar(value=self.settings.spotify_client_id)
         secret = tk.StringVar(value=self.settings.spotify_client_secret)
         ttk.Label(frame, text="Client ID").grid(row=2, column=0, sticky="w", pady=5)
@@ -257,8 +334,11 @@ class App(tk.Tk):
         ttk.Label(frame, text="Client Secret").grid(row=3, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=secret, show="•", width=48).grid(row=3, column=1, pady=5)
         def save() -> None:
+            credentials_changed = (client_id.get().strip() != self.settings.spotify_client_id or secret.get().strip() != self.settings.spotify_client_secret)
             self.settings.spotify_client_id = client_id.get().strip()
             self.settings.spotify_client_secret = secret.get().strip()
+            if credentials_changed:
+                self.settings.spotify_refresh_token = ""
             self.settings.save()
             dialog.destroy()
         ttk.Button(frame, text="Open Spotify Developer Dashboard", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=4, column=0, sticky="w", pady=(14, 0))
