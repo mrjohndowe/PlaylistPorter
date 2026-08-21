@@ -8,6 +8,7 @@ Playlist Porter is a Windows desktop app that creates an MP3 folder from a publi
 - Signs the user into Spotify, reads playlists that user owns or collaborates on through Spotify's official Web API, searches YouTube for each listed track, and saves the matched audio as MP3.
 - Numbers tracks in playlist order and writes `playlist-info.json` with source details and any failures.
 - Uses a bundled FFmpeg executable supplied by `imageio-ffmpeg`; a separate FFmpeg installation is not required.
+- Installs and explicitly configures Deno plus yt-dlp's EJS challenge scripts for current YouTube extraction; users do not need a separate JavaScript runtime installation.
 - Continues when an individual track is unavailable.
 
 Spotify does not provide downloadable MP3 audio through its API. Spotify playlist links are used only for titles, artists, ordering, and the playlist name. Since Spotify's February 2026 API changes, playlist contents are returned only when the signed-in user owns the playlist or is a collaborator. The resulting YouTube search match may differ from the Spotify recording, so preview the output. Only download media you own or have permission to save, and follow the source platform's terms.

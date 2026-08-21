@@ -58,6 +58,32 @@ def classify_url(value: str) -> str:
     raise ValueError("Paste a public Spotify or YouTube playlist link.")
 
 
+def deno_executable() -> Path:
+    """Return the Deno runtime installed beside the active virtual environment."""
+    executable_name = "deno.exe" if os.name == "nt" else "deno"
+    candidates = [Path(sys.executable).parent / executable_name]
+    try:
+        import deno
+
+        finder = getattr(deno, "find_deno_exe", None)
+        if finder:
+            candidates.insert(0, Path(finder()))
+    except (ImportError, OSError, TypeError):
+        pass
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError("The Deno JavaScript runtime is missing. Close the app and run launch.ps1 again to install it.")
+
+
+def youtube_options(**overrides: object) -> dict[str, object]:
+    options: dict[str, object] = {
+        "js_runtimes": {"deno": {"path": str(deno_executable())}},
+    }
+    options.update(overrides)
+    return options
+
+
 class Settings:
     def __init__(self) -> None:
         self.destination = ""
@@ -94,7 +120,7 @@ class PlaylistService:
         import yt_dlp
 
         self.status("Reading the YouTube playlist…")
-        options = {"quiet": True, "extract_flat": True, "skip_download": True, "ignoreerrors": True}
+        options = youtube_options(quiet=True, extract_flat=True, skip_download=True, ignoreerrors=True)
         with yt_dlp.YoutubeDL(options) as downloader:
             info = downloader.extract_info(url, download=False)
         entries = [entry for entry in (info.get("entries") or []) if entry]
@@ -237,11 +263,11 @@ class PlaylistService:
             self.status(f"Downloading {index} of {total}: {track.search_text}")
             target = str(folder / f"{index:03d} - %(title)s.%(ext)s")
             source = track.source_url or f"ytsearch1:{track.search_text} official audio"
-            options = {
+            options = youtube_options(**{
                 "format": "bestaudio/best", "outtmpl": target, "quiet": True, "noplaylist": True,
                 "ignoreerrors": False, "ffmpeg_location": ffmpeg,
                 "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
-            }
+            })
             try:
                 with yt_dlp.YoutubeDL(options) as downloader:
                     downloader.download([source])

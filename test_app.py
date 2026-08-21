@@ -1,6 +1,6 @@
 import unittest
 
-from app import classify_url, safe_folder_name
+from app import classify_url, safe_folder_name, youtube_options
 
 
 class AppHelpersTests(unittest.TestCase):
@@ -18,7 +18,12 @@ class AppHelpersTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             classify_url('https://example.com/playlist')
 
+    def test_youtube_options_configure_deno(self):
+        options = youtube_options(quiet=True)
+        self.assertIn('deno', options['js_runtimes'])
+        self.assertTrue(options['js_runtimes']['deno']['path'].lower().endswith('deno.exe'))
+        self.assertTrue(options['quiet'])
+
 
 if __name__ == '__main__':
     unittest.main()
-

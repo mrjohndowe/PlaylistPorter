@@ -1,4 +1,4 @@
-yt-dlp>=2026.8.9
+yt-dlp[default]>=2026.8.9
+deno>=2.3.0
 imageio-ffmpeg>=0.6.0
 requests>=2.32.0
-
