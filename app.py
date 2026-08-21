@@ -249,17 +249,32 @@ class PlaylistService:
             raise ValueError("No tracks were found in that Spotify playlist.")
         return Playlist(data.get("name") or "Spotify Playlist", tracks, "Spotify")
 
-    def download(self, playlist: Playlist, destination: Path) -> tuple[int, list[str]]:
+    def download(
+        self,
+        playlist: Playlist,
+        destination: Path,
+        cancel_event: threading.Event | None = None,
+    ) -> tuple[int, list[str], bool]:
         import imageio_ffmpeg
         import yt_dlp
 
+        cancel_event = cancel_event or threading.Event()
         folder = destination / safe_folder_name(playlist.name)
         folder.mkdir(parents=True, exist_ok=True)
         ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
         failures: list[str] = []
         completed = 0
+        cancelled = False
         total = len(playlist.tracks)
+
+        def stop_if_requested(_: dict[str, object]) -> None:
+            if cancel_event.is_set():
+                raise RuntimeError("Download stopped by user")
+
         for index, track in enumerate(playlist.tracks, 1):
+            if cancel_event.is_set():
+                cancelled = True
+                break
             self.status(f"Downloading {index} of {total}: {track.search_text}")
             target = str(folder / f"{index:03d} - %(title)s.%(ext)s")
             source = track.source_url or f"ytsearch1:{track.search_text} official audio"
@@ -267,18 +282,27 @@ class PlaylistService:
                 "format": "bestaudio/best", "outtmpl": target, "quiet": True, "noplaylist": True,
                 "ignoreerrors": False, "ffmpeg_location": ffmpeg,
                 "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+                "progress_hooks": [stop_if_requested],
+                "postprocessor_hooks": [stop_if_requested],
             })
             try:
                 with yt_dlp.YoutubeDL(options) as downloader:
                     downloader.download([source])
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
                 completed += 1
             except Exception as exc:  # One unavailable track should not stop the playlist.
+                if cancel_event.is_set():
+                    cancelled = True
+                    break
                 failures.append(f"{track.search_text}: {exc}")
         (folder / "playlist-info.json").write_text(json.dumps({
             "name": playlist.name, "source": playlist.source,
             "tracks": [track.__dict__ for track in playlist.tracks], "failures": failures,
+            "cancelled": cancelled, "completed_tracks": completed,
         }, indent=2), encoding="utf-8")
-        return completed, failures
+        return completed, failures, cancelled
 
 
 class App(tk.Tk):
@@ -289,6 +313,7 @@ class App(tk.Tk):
         self.minsize(720, 540)
         self.settings = Settings()
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.cancel_event = threading.Event()
         self.playlist: Playlist | None = None
         self._build_ui()
         self.after(100, self._poll_events)
@@ -331,6 +356,8 @@ class App(tk.Tk):
         ttk.Label(bottom, textvariable=self.status_text).pack(side="left", fill="x", expand=True)
         self.download_button = ttk.Button(bottom, text="Create MP3 folder", command=self.start_download, state="disabled")
         self.download_button.pack(side="right")
+        self.stop_button = ttk.Button(bottom, text="Stop", command=self.stop_download, state="disabled")
+        self.stop_button.pack(side="right", padx=(0, 8))
         ttk.Label(outer, text="Only download media you own or have permission to save. Spotify links provide metadata; audio matches come from YouTube.", style="Sub.TLabel", wraplength=800).pack(anchor="w", pady=(14, 0))
 
     def _first_run(self) -> None:
@@ -373,6 +400,8 @@ class App(tk.Tk):
     def _set_busy(self, busy: bool) -> None:
         self.preview_button.configure(state="disabled" if busy else "normal")
         self.download_button.configure(state="disabled" if busy or not self.playlist else "normal")
+        if not busy:
+            self.stop_button.configure(state="disabled")
 
     def _run(self, operation: Callable[[], object], event: str) -> None:
         self._set_busy(True)
@@ -402,7 +431,17 @@ class App(tk.Tk):
             return
         playlist = self.playlist
         destination = Path(self.settings.destination)
-        self._run(lambda: PlaylistService(self.settings, self._status).download(playlist, destination), "downloaded")
+        self.cancel_event.clear()
+        self._run(
+            lambda: PlaylistService(self.settings, self._status).download(playlist, destination, self.cancel_event),
+            "downloaded",
+        )
+        self.stop_button.configure(state="normal")
+
+    def stop_download(self) -> None:
+        self.cancel_event.set()
+        self.stop_button.configure(state="disabled")
+        self.status_text.set("Stopping after the current operation…")
 
     def _poll_events(self) -> None:
         try:
@@ -424,11 +463,13 @@ class App(tk.Tk):
                     self.status_text.set("Playlist ready")
                     self._set_busy(False)
                 elif event == "downloaded":
-                    completed, failures = payload  # type: ignore[misc]
+                    completed, failures, cancelled = payload  # type: ignore[misc]
                     self._set_busy(False)
-                    self.status_text.set("Finished")
+                    self.status_text.set("Stopped" if cancelled else "Finished")
                     folder = Path(self.settings.destination) / safe_folder_name(self.playlist.name if self.playlist else "Playlist")
                     detail = f"Saved {completed} MP3 files to:\n{folder}"
+                    if cancelled:
+                        detail = f"Download stopped. {detail}\n\nCompleted files were kept. You can start the playlist again when ready."
                     if failures:
                         detail += f"\n\n{len(failures)} track(s) could not be downloaded. Details are in playlist-info.json."
                     messagebox.showinfo(APP_NAME, detail)

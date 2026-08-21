@@ -1,6 +1,9 @@
 import unittest
+import threading
+import tempfile
+from pathlib import Path
 
-from app import classify_url, safe_folder_name, youtube_options
+from app import Playlist, PlaylistService, Settings, Track, classify_url, safe_folder_name, youtube_options
 
 
 class AppHelpersTests(unittest.TestCase):
@@ -23,6 +26,20 @@ class AppHelpersTests(unittest.TestCase):
         self.assertIn('deno', options['js_runtimes'])
         self.assertTrue(options['js_runtimes']['deno']['path'].lower().endswith('deno.exe'))
         self.assertTrue(options['quiet'])
+
+    def test_download_can_stop_before_first_track(self):
+        cancel_event = threading.Event()
+        cancel_event.set()
+        playlist = Playlist('Cancelled list', [Track('Never started')], 'YouTube')
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            completed, failures, cancelled = PlaylistService(Settings(), lambda _: None).download(
+                playlist, Path(temporary_directory), cancel_event
+            )
+            self.assertEqual(completed, 0)
+            self.assertEqual(failures, [])
+            self.assertTrue(cancelled)
+            report = Path(temporary_directory) / 'Cancelled list' / 'playlist-info.json'
+            self.assertTrue(report.is_file())
 
 
 if __name__ == '__main__':
