@@ -3,7 +3,7 @@ import threading
 import tempfile
 from pathlib import Path
 
-from app import Playlist, PlaylistService, Settings, Track, classify_url, safe_folder_name, youtube_options
+from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, is_youtube_cookie_domain, safe_folder_name, youtube_options
 
 
 class AppHelpersTests(unittest.TestCase):
@@ -50,6 +50,21 @@ class AppHelpersTests(unittest.TestCase):
 
     def test_settings_dark_mode_defaults_to_boolean(self):
         self.assertIsInstance(Settings().dark_mode, bool)
+
+    def test_cookie_export_domain_filter(self):
+        self.assertTrue(is_youtube_cookie_domain('.youtube.com'))
+        self.assertTrue(is_youtube_cookie_domain('accounts.google.com'))
+        self.assertFalse(is_youtube_cookie_domain('.example.com'))
+
+    def test_opera_gx_uses_opera_extractor_and_gx_profile(self):
+        browser, profile, keyring, container = browser_cookie_spec('opera_gx')
+        self.assertEqual(browser, 'opera')
+        self.assertTrue(profile.endswith(r'Opera Software\Opera GX Stable'))
+        self.assertIsNone(keyring)
+        self.assertIsNone(container)
+
+    def test_browser_display_name_preserves_opera_gx(self):
+        self.assertEqual(browser_display_name('opera_gx'), 'Opera GX')
 
 
 if __name__ == '__main__':

@@ -14,7 +14,7 @@ Playlist Porter is a Windows desktop app that creates an MP3 folder from a publi
 - Installs and explicitly configures Deno plus yt-dlp's EJS challenge scripts for current YouTube extraction; users do not need a separate JavaScript runtime installation.
 - Continues when an individual track is unavailable.
 - Provides a **Stop** button during conversion. Cancellation interrupts active download progress, prevents later tracks from starting, and keeps MP3 files that already finished.
-- Supports age-restricted YouTube videos through an optional Netscape-format `cookies.txt` file or cookies read from a signed-in Firefox, Chrome, Edge, or Brave profile. Cookie use is opt-in and Firefox is the most reliable browser option on Windows.
+- Supports age-restricted YouTube videos through an optional Netscape-format `cookies.txt` file or cookies read from a signed-in Firefox, Chrome, Edge, Brave, Opera, or Opera GX profile. Cookie use is opt-in and Firefox is the most reliable browser option on Windows.
 
 Spotify does not provide downloadable MP3 audio through its API. Spotify playlist links are used only for titles, artists, ordering, and the playlist name. Since Spotify's February 2026 API changes, playlist contents are returned only when the signed-in user owns the playlist or is a collaborator. The resulting YouTube search match may differ from the Spotify recording, so preview the output. Only download media you own or have permission to save, and follow the source platform's terms.
 
@@ -44,7 +44,9 @@ Credentials and the Spotify refresh token are stored for the current Windows use
 
 YouTube requires a signed-in, age-eligible account for restricted videos. Open **Settings** and either select a Netscape-format `cookies.txt` file or choose the browser where YouTube is signed in. A selected file takes precedence over a selected browser. Playlist Porter stores only the file path or browser name; it does not copy browser cookies into its settings file.
 
-Firefox is recommended for direct browser-cookie access on Windows. Chromium browsers can lock or restrict cookie decryption; close Chrome, Edge, or Brave completely before conversion if access fails. Treat exported cookie files like passwords: keep them outside this repository, do not share them, and remove them when no longer needed.
+For the easiest setup, select the desired browser under **Or browser** and choose **Sign in & create**. Playlist Porter opens that exact browser to YouTube, waits while the user signs in, and then saves `%APPDATA%\PlaylistPorter\youtube-cookies.txt` automatically after confirmation. It exports only YouTube and Google-domain cookies, selects the resulting file, and never exports cookies for unrelated sites. Treat the resulting file like a password.
+
+Firefox is recommended for direct browser-cookie access on Windows. Chromium browsers can lock or restrict cookie decryption; close Chrome, Edge, Brave, Opera, or Opera GX completely before conversion if access fails. Opera GX is mapped to its dedicated `%APPDATA%\Opera Software\Opera GX Stable` profile. Treat exported cookie files like passwords: keep them outside this repository, do not share them, and remove them when no longer needed.
 
 ## Tests
 

@@ -23,6 +23,7 @@ SETTINGS_FILE = Path(os.getenv("APPDATA", Path.home())) / "PlaylistPorter" / "se
 INVALID_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 SPOTIFY_PLAYLIST_RE = re.compile(r"(?:open\.spotify\.com/playlist/|spotify:playlist:)([A-Za-z0-9]+)")
 SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
+BROWSER_CHOICES = ("None", "Firefox", "Chrome", "Edge", "Brave", "Opera", "Opera GX")
 
 
 def resource_path(relative_path: str) -> Path:
@@ -92,7 +93,7 @@ def youtube_options(settings: "Settings | None" = None, **overrides: object) -> 
             raise ValueError("The YouTube cookies file selected in Settings no longer exists.")
         options["cookiefile"] = str(cookie_file)
     elif settings and settings.youtube_cookie_browser:
-        options["cookiesfrombrowser"] = (settings.youtube_cookie_browser, None, None, None)
+        options["cookiesfrombrowser"] = browser_cookie_spec(settings.youtube_cookie_browser)
     options.update(overrides)
     return options
 
@@ -107,6 +108,66 @@ def friendly_error(value: object) -> str:
     if "Could not copy Chrome cookie database" in message or "Permission denied" in message and "cookie" in message.lower():
         return "Could not read browser cookies. Close the selected browser completely and try again, or select a cookies.txt file in Settings."
     return message
+
+
+def is_youtube_cookie_domain(domain: str) -> bool:
+    normalized = domain.lstrip(".").lower()
+    return normalized == "youtube.com" or normalized.endswith(".youtube.com") or normalized == "google.com" or normalized.endswith(".google.com")
+
+
+def browser_cookie_spec(browser: str) -> tuple[str, str | None, None, None]:
+    key = browser.strip().lower().replace(" ", "_")
+    if key == "opera_gx":
+        profile = Path(os.getenv("APPDATA", Path.home())) / "Opera Software" / "Opera GX Stable"
+        return ("opera", str(profile), None, None)
+    return (key, None, None, None)
+
+
+def browser_display_name(browser: str) -> str:
+    return "Opera GX" if browser == "opera_gx" else browser.title()
+
+
+def browser_executable(browser: str) -> Path | None:
+    key = browser.strip().lower().replace(" ", "_")
+    program_files = Path(os.getenv("ProgramFiles", r"C:\Program Files"))
+    program_files_x86 = Path(os.getenv("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+    local_app_data = Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    candidates = {
+        "firefox": [program_files / "Mozilla Firefox" / "firefox.exe", program_files_x86 / "Mozilla Firefox" / "firefox.exe"],
+        "chrome": [program_files / "Google" / "Chrome" / "Application" / "chrome.exe", program_files_x86 / "Google" / "Chrome" / "Application" / "chrome.exe", local_app_data / "Google" / "Chrome" / "Application" / "chrome.exe"],
+        "edge": [program_files_x86 / "Microsoft" / "Edge" / "Application" / "msedge.exe", program_files / "Microsoft" / "Edge" / "Application" / "msedge.exe"],
+        "brave": [program_files / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe", program_files_x86 / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe", local_app_data / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe"],
+        "opera": [local_app_data / "Programs" / "Opera" / "opera.exe"],
+        "opera_gx": [local_app_data / "Programs" / "Opera GX" / "opera.exe"],
+    }
+    return next((path for path in candidates.get(key, []) if path.is_file()), None)
+
+
+def open_youtube_in_browser(browser: str) -> None:
+    executable = browser_executable(browser)
+    if not executable:
+        raise ValueError(f"Playlist Porter could not find {browser_display_name(browser)} on this computer.")
+    subprocess.Popen([str(executable), "https://www.youtube.com/"], close_fds=True)
+
+
+def export_youtube_cookies(browser: str, destination: Path) -> int:
+    """Export only YouTube/Google cookies from a local browser in Netscape format."""
+    from http.cookiejar import MozillaCookieJar
+    from yt_dlp.cookies import extract_cookies_from_browser
+
+    browser_name, profile, _, _ = browser_cookie_spec(browser)
+    source = extract_cookies_from_browser(browser_name, profile)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    output = MozillaCookieJar(str(destination))
+    count = 0
+    for cookie in source:
+        if is_youtube_cookie_domain(cookie.domain):
+            output.set_cookie(cookie)
+            count += 1
+    if not count:
+        raise ValueError(f"No YouTube sign-in cookies were found in {browser_display_name(browser)}. Sign into youtube.com in that browser first.")
+    output.save(ignore_discard=True, ignore_expires=True)
+    return count
 
 
 class Settings:
@@ -511,7 +572,7 @@ class App(tk.Tk):
         client_id = tk.StringVar(value=self.settings.spotify_client_id)
         secret = tk.StringVar(value=self.settings.spotify_client_secret)
         cookie_file = tk.StringVar(value=self.settings.youtube_cookie_file)
-        cookie_browser = tk.StringVar(value=self.settings.youtube_cookie_browser or "None")
+        cookie_browser = tk.StringVar(value=browser_display_name(self.settings.youtube_cookie_browser) if self.settings.youtube_cookie_browser else "None")
         dark_mode = tk.BooleanVar(value=self.settings.dark_mode)
         ttk.Label(frame, text="Client ID", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=client_id, width=48).grid(row=2, column=1, pady=5)
@@ -528,8 +589,41 @@ class App(tk.Tk):
                 cookie_file.set(selected)
         ttk.Button(frame, text="Browse", style="Secondary.TButton", command=choose_cookie_file).grid(row=7, column=2, padx=(8, 0), pady=5)
         ttk.Label(frame, text="Or browser", style="CardText.TLabel").grid(row=8, column=0, sticky="w", pady=5)
-        ttk.Combobox(frame, textvariable=cookie_browser, values=("None", "Firefox", "Chrome", "Edge", "Brave"), state="readonly", width=39).grid(row=8, column=1, sticky="w", pady=5)
-        ttk.Label(frame, text="The browser must be signed into YouTube. Close Chromium browsers completely if cookie access fails.", style="CardText.TLabel", wraplength=520).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Combobox(frame, textvariable=cookie_browser, values=BROWSER_CHOICES, state="readonly", width=39).grid(row=8, column=1, sticky="w", pady=5)
+        def create_cookie_file() -> None:
+            selected_browser = cookie_browser.get().strip().lower().replace(" ", "_")
+            if selected_browser == "none":
+                messagebox.showwarning(APP_NAME, "Choose the browser where you are signed into YouTube first.", parent=dialog)
+                return
+            SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                open_youtube_in_browser(selected_browser)
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, friendly_error(exc), parent=dialog)
+                return
+            browser_name = browser_display_name(selected_browser)
+            chromium_note = "\n\nBefore continuing, close every window and background process for this browser so Windows can safely read its cookie database." if selected_browser != "firefox" else ""
+            ready = messagebox.askokcancel(
+                APP_NAME,
+                f"{browser_name} has opened to YouTube.\n\n1. Sign into the age-eligible YouTube account.\n2. Confirm YouTube shows you as signed in.{chromium_note}\n\nSelect OK when you are ready for Playlist Porter to create and save the cookies file.",
+                parent=dialog,
+            )
+            if not ready:
+                return
+            destination = SETTINGS_FILE.parent / "youtube-cookies.txt"
+            try:
+                count = export_youtube_cookies(selected_browser, destination)
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, friendly_error(exc), parent=dialog)
+                return
+            cookie_file.set(str(destination))
+            messagebox.showinfo(
+                APP_NAME,
+                f"Created and saved the cookies file with {count} YouTube/Google cookies.\n\nSaved to:\n{destination}\n\nIt is now selected for Playlist Porter. Keep this file private like a password.",
+                parent=dialog,
+            )
+        ttk.Button(frame, text="Sign in & create", style="Secondary.TButton", command=create_cookie_file).grid(row=8, column=2, padx=(8, 0), pady=5)
+        ttk.Label(frame, text="Choose a browser, then select Sign in & create. Playlist Porter opens YouTube and saves the finished file automatically after sign-in.", style="CardText.TLabel", wraplength=520).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
         ttk.Separator(frame).grid(row=10, column=0, columnspan=3, sticky="ew", pady=16)
         ttk.Checkbutton(frame, text="Use Dark Mode", variable=dark_mode, style="Card.TCheckbutton").grid(row=11, column=0, columnspan=3, sticky="w")
 
@@ -538,7 +632,7 @@ class App(tk.Tk):
             self.settings.spotify_client_id = client_id.get().strip()
             self.settings.spotify_client_secret = secret.get().strip()
             self.settings.youtube_cookie_file = cookie_file.get().strip()
-            selected_browser = cookie_browser.get().strip().lower()
+            selected_browser = cookie_browser.get().strip().lower().replace(" ", "_")
             self.settings.youtube_cookie_browser = "" if selected_browser == "none" else selected_browser
             self.settings.dark_mode = dark_mode.get()
             if credentials_changed:
