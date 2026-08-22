@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, deno_executable, is_youtube_cookie_domain, safe_folder_name, youtube_options
+from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, deno_executable, download_percent, is_youtube_cookie_domain, safe_folder_name, track_progress_text, youtube_options
 from updates import REPOSITORY, is_newer_version, release_from_payload, version_tuple
 
 
@@ -59,6 +59,17 @@ class AppHelpersTests(unittest.TestCase):
             self.assertTrue(cancelled)
             report = Path(temporary_directory) / 'Cancelled list' / 'playlist-info.json'
             self.assertTrue(report.is_file())
+
+    def test_download_percent_uses_actual_or_estimated_size(self):
+        self.assertEqual(download_percent({'downloaded_bytes': 50, 'total_bytes': 200}), 25.0)
+        self.assertEqual(download_percent({'downloaded_bytes': 75, 'total_bytes_estimate': 100}), 75.0)
+        self.assertEqual(download_percent({'downloaded_bytes': 200, 'total_bytes': 100}), 95.0)
+
+    def test_track_progress_text_shows_bar_and_states(self):
+        self.assertEqual(track_progress_text(40.0), '████░░░░░░  40%')
+        self.assertEqual(track_progress_text(100.0, 'complete'), '██████████ 100%')
+        self.assertIn('Converting', track_progress_text(95.0, 'converting'))
+        self.assertEqual(track_progress_text(0.0, 'failed'), 'Failed')
 
     def test_settings_dark_mode_defaults_to_boolean(self):
         self.assertIsInstance(Settings().dark_mode, bool)

@@ -117,6 +117,30 @@ def friendly_error(value: object) -> str:
     return message
 
 
+def download_percent(data: dict[str, object]) -> float:
+    """Return a bounded percentage from a yt-dlp progress-hook payload."""
+    downloaded = data.get("downloaded_bytes")
+    total = data.get("total_bytes") or data.get("total_bytes_estimate")
+    if isinstance(downloaded, (int, float)) and isinstance(total, (int, float)) and total > 0:
+        return max(0.0, min(95.0, float(downloaded) / float(total) * 100.0))
+    return 0.0
+
+
+def track_progress_text(percent: float, state: str = "downloading") -> str:
+    """Create a compact progress bar that remains aligned inside a Treeview cell."""
+    if state == "complete":
+        return "██████████ 100%"
+    if state == "converting":
+        return "█████████░ Converting"
+    if state == "failed":
+        return "Failed"
+    if state == "stopped":
+        return "Stopped"
+    bounded = max(0.0, min(100.0, percent))
+    filled = min(10, int(bounded / 10.0))
+    return f"{'█' * filled}{'░' * (10 - filled)} {bounded:3.0f}%"
+
+
 def is_youtube_cookie_domain(domain: str) -> bool:
     normalized = domain.lstrip(".").lower()
     return normalized == "youtube.com" or normalized.endswith(".youtube.com") or normalized == "google.com" or normalized.endswith(".google.com")
@@ -355,6 +379,7 @@ class PlaylistService:
         playlist: Playlist,
         destination: Path,
         cancel_event: threading.Event | None = None,
+        progress: Callable[[int, float, str], None] | None = None,
     ) -> tuple[int, list[str], bool]:
         import imageio_ffmpeg
         import yt_dlp
@@ -377,26 +402,52 @@ class PlaylistService:
                 cancelled = True
                 break
             self.status(f"Downloading {index} of {total}: {track.search_text}")
+            if progress:
+                progress(index, 0.0, "downloading")
+            last_reported_percent = -1
+
+            def report_download(data: dict[str, object], track_index: int = index) -> None:
+                nonlocal last_reported_percent
+                stop_if_requested(data)
+                if not progress:
+                    return
+                if data.get("status") == "finished":
+                    progress(track_index, 95.0, "converting")
+                elif data.get("status") == "downloading":
+                    percent = download_percent(data)
+                    whole_percent = int(percent)
+                    if whole_percent != last_reported_percent:
+                        last_reported_percent = whole_percent
+                        progress(track_index, percent, "downloading")
+
             target = str(folder / f"{index:03d} - %(title)s.%(ext)s")
             source = track.source_url or f"ytsearch1:{track.search_text} official audio"
             options = youtube_options(self.settings, **{
                 "format": "bestaudio/best", "outtmpl": target, "quiet": True, "noplaylist": True,
                 "ignoreerrors": False, "ffmpeg_location": ffmpeg,
                 "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
-                "progress_hooks": [stop_if_requested],
+                "progress_hooks": [report_download],
                 "postprocessor_hooks": [stop_if_requested],
             })
             try:
                 with yt_dlp.YoutubeDL(options) as downloader:
                     downloader.download([source])
                 if cancel_event.is_set():
+                    if progress:
+                        progress(index, 0.0, "stopped")
                     cancelled = True
                     break
                 completed += 1
+                if progress:
+                    progress(index, 100.0, "complete")
             except Exception as exc:  # One unavailable track should not stop the playlist.
                 if cancel_event.is_set():
+                    if progress:
+                        progress(index, 0.0, "stopped")
                     cancelled = True
                     break
+                if progress:
+                    progress(index, 0.0, "failed")
                 failures.append(f"{track.search_text}: {friendly_error(exc)}")
         (folder / "playlist-info.json").write_text(json.dumps({
             "name": playlist.name, "source": playlist.source,
@@ -532,7 +583,7 @@ class App(tk.Tk):
         list_frame.pack(fill="both", expand=True)
         self.track_list = ttk.Treeview(
             list_frame,
-            columns=("number", "title", "artist"),
+            columns=("number", "title", "artist", "progress"),
             show="headings",
             selectmode="browse",
             height=5,
@@ -540,19 +591,23 @@ class App(tk.Tk):
         self.track_list.heading("number", text="#")
         self.track_list.heading("title", text="TRACK")
         self.track_list.heading("artist", text="ARTIST / SOURCE")
+        self.track_list.heading("progress", text="DOWNLOAD PROGRESS")
         self.track_list.column("number", width=52, minwidth=52, stretch=False, anchor="center")
-        self.track_list.column("title", width=390, minwidth=220)
-        self.track_list.column("artist", width=300, minwidth=180)
+        self.track_list.column("title", width=300, minwidth=180)
+        self.track_list.column("artist", width=220, minwidth=150)
+        self.track_list.column("progress", width=200, minwidth=180, stretch=False, anchor="center")
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.track_list.yview)
         self.track_list.configure(yscrollcommand=scrollbar.set)
         self.track_list.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        progress_row = ttk.Frame(library_card, style="Card.TFrame")
-        progress_row.pack(fill="x", pady=(12, 0))
+        self.activity_frame = ttk.Frame(library_card, style="Card.TFrame")
+        self.activity_frame.pack(side="bottom", fill="x", pady=(12, 0), before=list_frame)
+        progress_row = ttk.Frame(self.activity_frame, style="Card.TFrame")
+        progress_row.pack(fill="x")
         self.status_text = tk.StringVar(value="Ready")
         ttk.Label(progress_row, textvariable=self.status_text, style="Status.TLabel").pack(side="left", fill="x", expand=True)
-        self.progress = ttk.Progressbar(library_card, mode="indeterminate", style="Modern.Horizontal.TProgressbar")
+        self.progress = ttk.Progressbar(self.activity_frame, mode="indeterminate", style="Modern.Horizontal.TProgressbar")
         self.progress.pack(fill="x", pady=(8, 0))
 
         actions = ttk.Frame(outer, style="App.TFrame")
@@ -719,6 +774,9 @@ class App(tk.Tk):
     def _status(self, text: str) -> None:
         self.events.put(("status", text))
 
+    def _track_progress(self, index: int, percent: float, state: str) -> None:
+        self.events.put(("track_progress", (index, percent, state)))
+
     def preview(self) -> None:
         url = self.url.get().strip()
         if not url:
@@ -736,8 +794,17 @@ class App(tk.Tk):
         playlist = self.playlist
         destination = Path(self.settings.destination)
         self.cancel_event.clear()
+        for item_id in self.track_list.get_children():
+            values = list(self.track_list.item(item_id, "values"))
+            values[3] = track_progress_text(0.0)
+            self.track_list.item(item_id, values=values)
         self._run(
-            lambda: PlaylistService(self.settings, self._status).download(playlist, destination, self.cancel_event),
+            lambda: PlaylistService(self.settings, self._status).download(
+                playlist,
+                destination,
+                self.cancel_event,
+                self._track_progress,
+            ),
             "downloaded",
         )
         self.stop_button.configure(state="normal")
@@ -753,6 +820,13 @@ class App(tk.Tk):
                 event, payload = self.events.get_nowait()
                 if event == "status":
                     self.status_text.set(str(payload))
+                elif event == "track_progress":
+                    index, percent, state = payload  # type: ignore[misc]
+                    item_id = str(index)
+                    if self.track_list.exists(item_id):
+                        values = list(self.track_list.item(item_id, "values"))
+                        values[3] = track_progress_text(float(percent), str(state))
+                        self.track_list.item(item_id, values=values)
                 elif event == "error":
                     self._set_busy(False)
                     self.status_text.set("Could not complete the request")
@@ -761,7 +835,17 @@ class App(tk.Tk):
                     self.playlist = payload  # type: ignore[assignment]
                     self.track_list.delete(*self.track_list.get_children())
                     for index, track in enumerate(self.playlist.tracks, 1):
-                        self.track_list.insert("", "end", values=(f"{index:02d}", track.title, track.artist or self.playlist.source))
+                        self.track_list.insert(
+                            "",
+                            "end",
+                            iid=str(index),
+                            values=(
+                                f"{index:02d}",
+                                track.title,
+                                track.artist or self.playlist.source,
+                                track_progress_text(0.0),
+                            ),
+                        )
                     folder = safe_folder_name(self.playlist.name)
                     self.summary.set(f"{self.playlist.name} · {len(self.playlist.tracks)} tracks · Folder: {folder}")
                     badge_color = "#E9FFF3" if self.playlist.source == "Spotify" else "#FFF1F1"
