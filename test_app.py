@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, deno_executable, is_youtube_cookie_domain, safe_folder_name, youtube_options
-from updates import is_newer_version, release_from_payload, version_tuple
+from updates import REPOSITORY, is_newer_version, release_from_payload, version_tuple
 
 
 class AppHelpersTests(unittest.TestCase):
@@ -83,6 +83,9 @@ class AppHelpersTests(unittest.TestCase):
         self.assertEqual(version_tuple('v1.2.3'), (1, 2, 3))
         self.assertTrue(is_newer_version('1.10.0', '1.9.9'))
         self.assertFalse(is_newer_version('1.0.0', '1.0.0'))
+
+    def test_updates_use_renamed_repository(self):
+        self.assertEqual(REPOSITORY, 'mrjohndowe/PlaylistPorter')
 
     def test_release_requires_installer_and_checksum(self):
         payload = {

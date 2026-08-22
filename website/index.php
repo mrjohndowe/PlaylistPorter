@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-const REPOSITORY = 'mrjohndowe/SpotifyConverter';
+const REPOSITORY = 'mrjohndowe/PlaylistPorter';
 const REPOSITORY_URL = 'https://github.com/' . REPOSITORY;
 
 function githubJson(string $endpoint): ?array

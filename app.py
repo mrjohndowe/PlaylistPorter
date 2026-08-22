@@ -530,7 +530,13 @@ class App(tk.Tk):
 
         list_frame = ttk.Frame(library_card, style="Card.TFrame")
         list_frame.pack(fill="both", expand=True)
-        self.track_list = ttk.Treeview(list_frame, columns=("number", "title", "artist"), show="headings", selectmode="browse")
+        self.track_list = ttk.Treeview(
+            list_frame,
+            columns=("number", "title", "artist"),
+            show="headings",
+            selectmode="browse",
+            height=5,
+        )
         self.track_list.heading("number", text="#")
         self.track_list.heading("title", text="TRACK")
         self.track_list.heading("artist", text="ARTIST / SOURCE")
@@ -550,7 +556,9 @@ class App(tk.Tk):
         self.progress.pack(fill="x", pady=(8, 0))
 
         actions = ttk.Frame(outer, style="App.TFrame")
-        actions.pack(fill="x", pady=(14, 0))
+        # Reserve the footer before the expandable playlist card is allocated.
+        # This keeps the action buttons visible on scaled or shorter displays.
+        actions.pack(side="bottom", fill="x", pady=(14, 0), before=library_card)
         ttk.Label(actions, text="Download only media you own or have permission to save.", style="Hint.TLabel").pack(side="left", anchor="center")
         self.download_button = ttk.Button(actions, text="Create MP3 folder", style="Primary.TButton", command=self.start_download, state="disabled")
         self.download_button.pack(side="right")

@@ -9,7 +9,7 @@ from pathlib import Path
 import requests
 
 
-REPOSITORY = "mrjohndowe/SpotifyConverter"
+REPOSITORY = "mrjohndowe/PlaylistPorter"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
@@ -88,4 +88,3 @@ def download_verified_installer(release: ReleaseInfo, timeout: int = 60) -> Path
         destination.unlink(missing_ok=True)
         raise ValueError("The downloaded update failed SHA-256 verification and was removed.")
     return destination
-
