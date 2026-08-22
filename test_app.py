@@ -4,7 +4,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, is_youtube_cookie_domain, safe_folder_name, youtube_options
+from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, deno_executable, is_youtube_cookie_domain, safe_folder_name, youtube_options
+from updates import is_newer_version, release_from_payload, version_tuple
 
 
 class AppHelpersTests(unittest.TestCase):
@@ -28,6 +29,14 @@ class AppHelpersTests(unittest.TestCase):
         self.assertIn('deno', options['js_runtimes'])
         self.assertTrue(options['js_runtimes']['deno']['path'].lower().endswith('deno.exe'))
         self.assertTrue(options['quiet'])
+
+    def test_deno_executable_uses_package_locator(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            executable = Path(temporary_directory) / 'Scripts' / 'deno.exe'
+            executable.parent.mkdir()
+            executable.touch()
+            with patch('deno.find_deno_bin', return_value=str(executable)):
+                self.assertEqual(deno_executable(), executable)
 
     def test_youtube_options_use_selected_browser_cookies(self):
         settings = Settings()
@@ -53,6 +62,7 @@ class AppHelpersTests(unittest.TestCase):
 
     def test_settings_dark_mode_defaults_to_boolean(self):
         self.assertIsInstance(Settings().dark_mode, bool)
+        self.assertIsInstance(Settings().automatic_updates, bool)
 
     def test_cookie_export_domain_filter(self):
         self.assertTrue(is_youtube_cookie_domain('.youtube.com'))
@@ -68,6 +78,24 @@ class AppHelpersTests(unittest.TestCase):
 
     def test_browser_display_name_preserves_opera_gx(self):
         self.assertEqual(browser_display_name('opera_gx'), 'Opera GX')
+
+    def test_update_versions_are_compared_semantically(self):
+        self.assertEqual(version_tuple('v1.2.3'), (1, 2, 3))
+        self.assertTrue(is_newer_version('1.10.0', '1.9.9'))
+        self.assertFalse(is_newer_version('1.0.0', '1.0.0'))
+
+    def test_release_requires_installer_and_checksum(self):
+        payload = {
+            'tag_name': 'v1.2.3',
+            'html_url': 'https://example.test/release',
+            'assets': [
+                {'name': 'Playlist-Porter-v1.2.3-Setup.exe', 'browser_download_url': 'https://example.test/setup'},
+                {'name': 'Playlist-Porter-v1.2.3-Setup.exe.sha256', 'browser_download_url': 'https://example.test/hash'},
+            ],
+        }
+        release = release_from_payload(payload)
+        self.assertEqual(release.version, '1.2.3')
+        self.assertEqual(release.installer_name, 'Playlist-Porter-v1.2.3-Setup.exe')
 
 
 if __name__ == '__main__':

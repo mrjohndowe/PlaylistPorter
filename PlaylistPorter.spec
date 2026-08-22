@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 
+from deno import find_deno_bin
 from PyInstaller.utils.hooks import collect_all
 
 
@@ -15,7 +16,7 @@ for package in ("yt_dlp", "yt_dlp_ejs", "imageio_ffmpeg", "deno"):
     binaries += package_binaries
     hiddenimports += package_hiddenimports
 
-deno_exe = Path(sys.executable).parent / "deno.exe"
+deno_exe = Path(find_deno_bin())
 if not deno_exe.is_file():
     raise SystemExit(f"Deno was not found at {deno_exe}. Install requirements.txt before building.")
 binaries.append((str(deno_exe), "."))
@@ -52,4 +53,3 @@ coll = COLLECT(
     upx=True,
     name="PlaylistPorter",
 )
-

@@ -18,6 +18,13 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 from urllib.parse import parse_qs, urlencode, urlparse
 
+try:
+    from build_version import APP_VERSION
+except ImportError:
+    from version import APP_VERSION
+
+from updates import ReleaseInfo, download_verified_installer, is_newer_version, latest_release
+
 APP_NAME = "Playlist Porter"
 SETTINGS_FILE = Path(os.getenv("APPDATA", Path.home())) / "PlaylistPorter" / "settings.json"
 INVALID_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -72,10 +79,10 @@ def deno_executable() -> Path:
     try:
         import deno
 
-        finder = getattr(deno, "find_deno_exe", None)
+        finder = getattr(deno, "find_deno_bin", None)
         if finder:
             candidates.insert(0, Path(finder()))
-    except (ImportError, OSError, TypeError):
+    except (ImportError, OSError, TypeError, ValueError):
         pass
     for candidate in candidates:
         if candidate.is_file():
@@ -179,6 +186,7 @@ class Settings:
         self.youtube_cookie_file = ""
         self.youtube_cookie_browser = ""
         self.dark_mode = False
+        self.automatic_updates = True
         self.load()
 
     def load(self) -> None:
@@ -191,6 +199,7 @@ class Settings:
             self.youtube_cookie_file = data.get("youtube_cookie_file", "")
             self.youtube_cookie_browser = data.get("youtube_cookie_browser", "")
             self.dark_mode = bool(data.get("dark_mode", False))
+            self.automatic_updates = bool(data.get("automatic_updates", True))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
 
@@ -411,8 +420,12 @@ class App(tk.Tk):
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.cancel_event = threading.Event()
         self.playlist: Playlist | None = None
+        self._update_checking = False
+        self._manual_update_check = False
         self._build_ui()
         self.after(100, self._poll_events)
+        if self.settings.automatic_updates and getattr(sys, "frozen", False):
+            self.after(1200, self.check_for_updates)
         if not self.settings.destination:
             self.after(250, self._first_run)
 
@@ -574,6 +587,7 @@ class App(tk.Tk):
         cookie_file = tk.StringVar(value=self.settings.youtube_cookie_file)
         cookie_browser = tk.StringVar(value=browser_display_name(self.settings.youtube_cookie_browser) if self.settings.youtube_cookie_browser else "None")
         dark_mode = tk.BooleanVar(value=self.settings.dark_mode)
+        automatic_updates = tk.BooleanVar(value=self.settings.automatic_updates)
         ttk.Label(frame, text="Client ID", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=client_id, width=48).grid(row=2, column=1, pady=5)
         ttk.Label(frame, text="Client Secret", style="CardText.TLabel").grid(row=3, column=0, sticky="w", pady=5)
@@ -626,6 +640,7 @@ class App(tk.Tk):
         ttk.Label(frame, text="Choose a browser, then select Sign in & create. Playlist Porter opens YouTube and saves the finished file automatically after sign-in.", style="CardText.TLabel", wraplength=520).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
         ttk.Separator(frame).grid(row=10, column=0, columnspan=3, sticky="ew", pady=16)
         ttk.Checkbutton(frame, text="Use Dark Mode", variable=dark_mode, style="Card.TCheckbutton").grid(row=11, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(frame, text="Automatically check for updates when Playlist Porter starts", variable=automatic_updates, style="Card.TCheckbutton").grid(row=12, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         def save() -> None:
             credentials_changed = (client_id.get().strip() != self.settings.spotify_client_id or secret.get().strip() != self.settings.spotify_client_secret)
@@ -635,13 +650,44 @@ class App(tk.Tk):
             selected_browser = cookie_browser.get().strip().lower().replace(" ", "_")
             self.settings.youtube_cookie_browser = "" if selected_browser == "none" else selected_browser
             self.settings.dark_mode = dark_mode.get()
+            self.settings.automatic_updates = automatic_updates.get()
             if credentials_changed:
                 self.settings.spotify_refresh_token = ""
             self.settings.save()
             dialog.destroy()
             self._apply_theme()
-        ttk.Button(frame, text="Spotify dashboard", style="Secondary.TButton", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=12, column=0, sticky="w", pady=(18, 0))
-        ttk.Button(frame, text="Save settings", style="Primary.TButton", command=save).grid(row=12, column=1, columnspan=2, sticky="e", pady=(18, 0))
+        def manual_update_check() -> None:
+            dialog.destroy()
+            self.check_for_updates(manual=True)
+        ttk.Button(frame, text="Check for updates", style="Secondary.TButton", command=manual_update_check).grid(row=13, column=0, sticky="w", pady=(18, 0))
+        ttk.Button(frame, text="Spotify dashboard", style="Secondary.TButton", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=13, column=1, sticky="w", padx=(8, 0), pady=(18, 0))
+        ttk.Button(frame, text="Save settings", style="Primary.TButton", command=save).grid(row=13, column=2, sticky="e", pady=(18, 0))
+
+    def check_for_updates(self, manual: bool = False) -> None:
+        if self._update_checking:
+            return
+        self._update_checking = True
+        self._manual_update_check = manual
+        if manual:
+            self.status_text.set("Checking GitHub for updates…")
+        def worker() -> None:
+            try:
+                release = latest_release()
+                event = "update_available" if is_newer_version(release.version, APP_VERSION) else "up_to_date"
+                self.events.put((event, release))
+            except Exception as exc:
+                self.events.put(("update_error", friendly_error(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _download_update(self, release: ReleaseInfo) -> None:
+        self.status_text.set(f"Downloading Playlist Porter {release.version}…")
+        self.progress.start(12)
+        def worker() -> None:
+            try:
+                self.events.put(("update_ready", download_verified_installer(release)))
+            except Exception as exc:
+                self.events.put(("update_error", friendly_error(exc)))
+        threading.Thread(target=worker, daemon=True).start()
 
     def _set_busy(self, busy: bool) -> None:
         self.preview_button.configure(state="disabled" if busy else "normal")
@@ -726,6 +772,36 @@ class App(tk.Tk):
                     if failures:
                         detail += f"\n\n{len(failures)} track(s) could not be downloaded. Details are in playlist-info.json."
                     messagebox.showinfo(APP_NAME, detail)
+                elif event == "update_available":
+                    self._update_checking = False
+                    release = payload  # type: ignore[assignment]
+                    install = messagebox.askyesno(
+                        APP_NAME,
+                        f"Playlist Porter {release.version} is available.\n\nYou have {APP_VERSION}. Download and install the update now?",
+                    )
+                    if install:
+                        self._update_checking = True
+                        self._download_update(release)
+                    else:
+                        self.status_text.set("Update postponed")
+                elif event == "up_to_date":
+                    self._update_checking = False
+                    self.status_text.set("Ready")
+                    if self._manual_update_check:
+                        messagebox.showinfo(APP_NAME, f"Playlist Porter {APP_VERSION} is the latest version.")
+                elif event == "update_ready":
+                    self._update_checking = False
+                    self.progress.stop()
+                    installer = Path(payload)
+                    subprocess.Popen([str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"])
+                    self.destroy()
+                elif event == "update_error":
+                    manual = self._manual_update_check
+                    self._update_checking = False
+                    self.progress.stop()
+                    self.status_text.set("Ready")
+                    if manual:
+                        messagebox.showerror(APP_NAME, f"Could not check for updates:\n\n{payload}")
         except queue.Empty:
             pass
         self.after(100, self._poll_events)
