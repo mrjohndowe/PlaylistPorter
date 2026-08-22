@@ -2,6 +2,7 @@ import unittest
 import threading
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, is_youtube_cookie_domain, safe_folder_name, youtube_options
 
@@ -22,7 +23,8 @@ class AppHelpersTests(unittest.TestCase):
             classify_url('https://example.com/playlist')
 
     def test_youtube_options_configure_deno(self):
-        options = youtube_options(quiet=True)
+        with patch('app.deno_executable', return_value=Path('C:/tools/deno.exe')):
+            options = youtube_options(quiet=True)
         self.assertIn('deno', options['js_runtimes'])
         self.assertTrue(options['js_runtimes']['deno']['path'].lower().endswith('deno.exe'))
         self.assertTrue(options['quiet'])
@@ -31,7 +33,8 @@ class AppHelpersTests(unittest.TestCase):
         settings = Settings()
         settings.youtube_cookie_file = ''
         settings.youtube_cookie_browser = 'firefox'
-        options = youtube_options(settings)
+        with patch('app.deno_executable', return_value=Path('C:/tools/deno.exe')):
+            options = youtube_options(settings)
         self.assertEqual(options['cookiesfrombrowser'], ('firefox', None, None, None))
 
     def test_download_can_stop_before_first_track(self):
