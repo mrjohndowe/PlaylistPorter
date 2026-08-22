@@ -4,5 +4,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!PlaylistPorter.spec
+!PlaylistPorter.spec
 .pytest_cache/
-
+installer/output/

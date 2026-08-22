@@ -68,7 +68,7 @@ def classify_url(value: str) -> str:
 def deno_executable() -> Path:
     """Return the Deno runtime installed beside the active virtual environment."""
     executable_name = "deno.exe" if os.name == "nt" else "deno"
-    candidates = [Path(sys.executable).parent / executable_name]
+    candidates = [resource_path(executable_name), Path(sys.executable).parent / executable_name]
     try:
         import deno
 

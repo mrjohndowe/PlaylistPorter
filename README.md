@@ -57,3 +57,18 @@ After the first launch has prepared the environment:
 ```
 
 These tests cover URL classification and Windows-safe playlist folder naming. A live conversion still depends on network access and the current Spotify/YouTube services.
+
+## Windows installer
+
+Every semantic version tag such as `v1.0.0` triggers `.github/workflows/release.yml`. GitHub Actions runs the tests, builds a standalone Windows application with PyInstaller, packages it with Inno Setup, generates a SHA-256 checksum, and publishes both files on the corresponding GitHub Release.
+
+The installer uses a per-user destination under `%LOCALAPPDATA%\Programs\Playlist Porter`, does not require administrator rights by default, creates a Start Menu shortcut, offers an optional desktop shortcut, and registers an uninstaller. The package includes Python, Deno, FFmpeg, yt-dlp, EJS challenge scripts, and the application logo; end users do not need to install those components separately.
+
+To build version `1.0.0` locally, install Inno Setup 6 and run:
+
+```powershell
+.\build-installer.ps1 -Version 1.0.0
+
+```
+
+The resulting installer and checksum are written to `installer\output`. The installer is not Authenticode-signed; Windows will not show a verified publisher until the project adopts a trusted code-signing certificate and signs the final installer before release.
