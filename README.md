@@ -6,6 +6,7 @@ Playlist Porter is a Windows desktop app that creates an MP3 folder from a publi
 
 - Presents a polished card-based desktop interface with a structured track table, source indicator, activity bar, and clearly separated primary, secondary, and stop actions.
 - Uses an original Playlist Porter logo—combining a folder, play symbol, and audio levels—in the application header and Windows title bar.
+- Includes a persistent **Dark Mode** setting that updates the full interface immediately when saved and restores the selected appearance at the next launch.
 - Previews public YouTube playlists and downloads their audio as 192 kbps MP3 files.
 - Signs the user into Spotify, reads playlists that user owns or collaborates on through Spotify's official Web API, searches YouTube for each listed track, and saves the matched audio as MP3.
 - Numbers tracks in playlist order and writes `playlist-info.json` with source details and any failures.

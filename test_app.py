@@ -48,6 +48,9 @@ class AppHelpersTests(unittest.TestCase):
             report = Path(temporary_directory) / 'Cancelled list' / 'playlist-info.json'
             self.assertTrue(report.is_file())
 
+    def test_settings_dark_mode_defaults_to_boolean(self):
+        self.assertIsInstance(Settings().dark_mode, bool)
+
 
 if __name__ == '__main__':
     unittest.main()

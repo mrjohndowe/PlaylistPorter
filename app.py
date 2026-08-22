@@ -117,6 +117,7 @@ class Settings:
         self.spotify_refresh_token = ""
         self.youtube_cookie_file = ""
         self.youtube_cookie_browser = ""
+        self.dark_mode = False
         self.load()
 
     def load(self) -> None:
@@ -128,6 +129,7 @@ class Settings:
             self.spotify_refresh_token = data.get("spotify_refresh_token", "")
             self.youtube_cookie_file = data.get("youtube_cookie_file", "")
             self.youtube_cookie_browser = data.get("youtube_cookie_browser", "")
+            self.dark_mode = bool(data.get("dark_mode", False))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
 
@@ -340,11 +342,11 @@ class App(tk.Tk):
         self.title(APP_NAME)
         self.geometry("980x720")
         self.minsize(820, 620)
-        self.configure(background="#F4F6FA")
+        self.settings = Settings()
+        self.configure(background="#111522" if self.settings.dark_mode else "#F4F6FA")
         self.window_logo = tk.PhotoImage(file=str(resource_path("assets/playlist-porter-logo.png")))
         self.header_logo = self.window_logo.subsample(16, 16)
         self.iconphoto(True, self.window_logo)
-        self.settings = Settings()
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.cancel_event = threading.Event()
         self.playlist: Playlist | None = None
@@ -353,37 +355,64 @@ class App(tk.Tk):
         if not self.settings.destination:
             self.after(250, self._first_run)
 
-    def _build_ui(self) -> None:
+    def _configure_styles(self) -> None:
+        palettes = {
+            "light": {
+                "canvas": "#F4F6FA", "card": "#FFFFFF", "field": "#F8FAFD", "text": "#151B2B",
+                "muted": "#65708A", "border": "#D8DEEA", "secondary": "#EEF0F7", "secondary_active": "#E2E5EF",
+                "table_heading": "#F7F8FC", "progress_track": "#E9ECF4", "selection": "#EDEBFF",
+                "selection_text": "#302A8C", "danger": "#FFF0F0", "danger_active": "#FFE1E3", "danger_text": "#C43D4B",
+            },
+            "dark": {
+                "canvas": "#111522", "card": "#1A2030", "field": "#22293B", "text": "#F4F6FC",
+                "muted": "#A4AEC3", "border": "#343D52", "secondary": "#293146", "secondary_active": "#343E57",
+                "table_heading": "#222A3C", "progress_track": "#2A3246", "selection": "#3B367A",
+                "selection_text": "#FFFFFF", "danger": "#3A2530", "danger_active": "#50303A", "danger_text": "#FF9AA5",
+            },
+        }
+        self.palette = palettes["dark" if self.settings.dark_mode else "light"]
+        p = self.palette
         style = ttk.Style(self)
         style.theme_use("clam")
         self.option_add("*Font", ("Segoe UI", 10))
-        style.configure("App.TFrame", background="#F4F6FA")
-        style.configure("Card.TFrame", background="#FFFFFF", relief="flat")
-        style.configure("Title.TLabel", background="#F4F6FA", foreground="#151B2B", font=("Segoe UI Semibold", 26))
-        style.configure("Subtitle.TLabel", background="#F4F6FA", foreground="#65708A", font=("Segoe UI", 10))
-        style.configure("CardTitle.TLabel", background="#FFFFFF", foreground="#20283A", font=("Segoe UI Semibold", 11))
-        style.configure("CardText.TLabel", background="#FFFFFF", foreground="#65708A")
-        style.configure("Status.TLabel", background="#FFFFFF", foreground="#4C5872", font=("Segoe UI Semibold", 9))
-        style.configure("Hint.TLabel", background="#F4F6FA", foreground="#7B8499", font=("Segoe UI", 9))
-        style.configure("TEntry", fieldbackground="#F8FAFD", foreground="#20283A", bordercolor="#D8DEEA", lightcolor="#D8DEEA", darkcolor="#D8DEEA", padding=10)
-        style.configure("TCombobox", fieldbackground="#F8FAFD", padding=7)
+        style.configure("App.TFrame", background=p["canvas"])
+        style.configure("Card.TFrame", background=p["card"], relief="flat")
+        style.configure("Title.TLabel", background=p["canvas"], foreground=p["text"], font=("Segoe UI Semibold", 26))
+        style.configure("Subtitle.TLabel", background=p["canvas"], foreground=p["muted"], font=("Segoe UI", 10))
+        style.configure("CardTitle.TLabel", background=p["card"], foreground=p["text"], font=("Segoe UI Semibold", 11))
+        style.configure("CardText.TLabel", background=p["card"], foreground=p["muted"])
+        style.configure("Status.TLabel", background=p["card"], foreground=p["muted"], font=("Segoe UI Semibold", 9))
+        style.configure("Hint.TLabel", background=p["canvas"], foreground=p["muted"], font=("Segoe UI", 9))
+        style.configure("TEntry", fieldbackground=p["field"], foreground=p["text"], insertcolor=p["text"], bordercolor=p["border"], lightcolor=p["border"], darkcolor=p["border"], padding=10)
+        style.configure("TCombobox", fieldbackground=p["field"], foreground=p["text"], arrowcolor=p["muted"], padding=7)
+        style.configure("Card.TCheckbutton", background=p["card"], foreground=p["text"], font=("Segoe UI Semibold", 10))
+        style.map("Card.TCheckbutton", background=[("active", p["card"])], indicatorcolor=[("selected", "#625BF6"), ("!selected", p["field"])])
         style.configure("Primary.TButton", background="#625BF6", foreground="#FFFFFF", borderwidth=0, padding=(18, 10), font=("Segoe UI Semibold", 10))
         style.map("Primary.TButton", background=[("active", "#5048E5"), ("disabled", "#B9B6E9")], foreground=[("disabled", "#F2F1FA")])
-        style.configure("Secondary.TButton", background="#EEF0F7", foreground="#384158", borderwidth=0, padding=(14, 9), font=("Segoe UI Semibold", 9))
-        style.map("Secondary.TButton", background=[("active", "#E2E5EF")])
-        style.configure("Danger.TButton", background="#FFF0F0", foreground="#C43D4B", borderwidth=0, padding=(14, 9), font=("Segoe UI Semibold", 9))
-        style.map("Danger.TButton", background=[("active", "#FFE1E3"), ("disabled", "#F4F4F6")], foreground=[("disabled", "#A8ACB6")])
-        style.configure("Modern.Horizontal.TProgressbar", troughcolor="#E9ECF4", background="#625BF6", borderwidth=0, thickness=5)
-        style.configure("Treeview", background="#FFFFFF", fieldbackground="#FFFFFF", foreground="#2A3246", rowheight=34, borderwidth=0, font=("Segoe UI", 10))
-        style.configure("Treeview.Heading", background="#F7F8FC", foreground="#68728A", borderwidth=0, padding=(8, 9), font=("Segoe UI Semibold", 9))
-        style.map("Treeview", background=[("selected", "#EDEBFF")], foreground=[("selected", "#302A8C")])
+        style.configure("Secondary.TButton", background=p["secondary"], foreground=p["text"], borderwidth=0, padding=(14, 9), font=("Segoe UI Semibold", 9))
+        style.map("Secondary.TButton", background=[("active", p["secondary_active"])])
+        style.configure("Danger.TButton", background=p["danger"], foreground=p["danger_text"], borderwidth=0, padding=(14, 9), font=("Segoe UI Semibold", 9))
+        style.map("Danger.TButton", background=[("active", p["danger_active"]), ("disabled", p["secondary"])], foreground=[("disabled", p["muted"])])
+        style.configure("Modern.Horizontal.TProgressbar", troughcolor=p["progress_track"], background="#625BF6", borderwidth=0, thickness=5)
+        style.configure("Treeview", background=p["card"], fieldbackground=p["card"], foreground=p["text"], rowheight=34, borderwidth=0, font=("Segoe UI", 10))
+        style.configure("Treeview.Heading", background=p["table_heading"], foreground=p["muted"], borderwidth=0, padding=(8, 9), font=("Segoe UI Semibold", 9))
+        style.map("Treeview", background=[("selected", p["selection"])], foreground=[("selected", p["selection_text"])])
+        self.configure(background=p["canvas"])
+
+    def _apply_theme(self) -> None:
+        self._configure_styles()
+        self.logo_label.configure(background=self.palette["canvas"])
+
+    def _build_ui(self) -> None:
+        self._configure_styles()
 
         outer = ttk.Frame(self, padding=(34, 26, 34, 22), style="App.TFrame")
         outer.pack(fill="both", expand=True)
 
         header = ttk.Frame(outer, style="App.TFrame")
         header.pack(fill="x", pady=(0, 20))
-        tk.Label(header, image=self.header_logo, background="#F4F6FA", borderwidth=0).pack(side="left", padx=(0, 14), anchor="n")
+        self.logo_label = tk.Label(header, image=self.header_logo, background=self.palette["canvas"], borderwidth=0)
+        self.logo_label.pack(side="left", padx=(0, 14), anchor="n")
         brand = ttk.Frame(header, style="App.TFrame")
         brand.pack(side="left", fill="x", expand=True)
         ttk.Label(brand, text="Playlist Porter", style="Title.TLabel").pack(anchor="w")
@@ -470,7 +499,7 @@ class App(tk.Tk):
     def open_settings(self) -> None:
         dialog = tk.Toplevel(self)
         dialog.title("Settings")
-        dialog.configure(background="#F4F6FA")
+        dialog.configure(background=self.palette["canvas"])
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
@@ -483,6 +512,7 @@ class App(tk.Tk):
         secret = tk.StringVar(value=self.settings.spotify_client_secret)
         cookie_file = tk.StringVar(value=self.settings.youtube_cookie_file)
         cookie_browser = tk.StringVar(value=self.settings.youtube_cookie_browser or "None")
+        dark_mode = tk.BooleanVar(value=self.settings.dark_mode)
         ttk.Label(frame, text="Client ID", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=client_id, width=48).grid(row=2, column=1, pady=5)
         ttk.Label(frame, text="Client Secret", style="CardText.TLabel").grid(row=3, column=0, sticky="w", pady=5)
@@ -500,6 +530,8 @@ class App(tk.Tk):
         ttk.Label(frame, text="Or browser", style="CardText.TLabel").grid(row=8, column=0, sticky="w", pady=5)
         ttk.Combobox(frame, textvariable=cookie_browser, values=("None", "Firefox", "Chrome", "Edge", "Brave"), state="readonly", width=39).grid(row=8, column=1, sticky="w", pady=5)
         ttk.Label(frame, text="The browser must be signed into YouTube. Close Chromium browsers completely if cookie access fails.", style="CardText.TLabel", wraplength=520).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Separator(frame).grid(row=10, column=0, columnspan=3, sticky="ew", pady=16)
+        ttk.Checkbutton(frame, text="Use Dark Mode", variable=dark_mode, style="Card.TCheckbutton").grid(row=11, column=0, columnspan=3, sticky="w")
 
         def save() -> None:
             credentials_changed = (client_id.get().strip() != self.settings.spotify_client_id or secret.get().strip() != self.settings.spotify_client_secret)
@@ -508,12 +540,14 @@ class App(tk.Tk):
             self.settings.youtube_cookie_file = cookie_file.get().strip()
             selected_browser = cookie_browser.get().strip().lower()
             self.settings.youtube_cookie_browser = "" if selected_browser == "none" else selected_browser
+            self.settings.dark_mode = dark_mode.get()
             if credentials_changed:
                 self.settings.spotify_refresh_token = ""
             self.settings.save()
             dialog.destroy()
-        ttk.Button(frame, text="Spotify dashboard", style="Secondary.TButton", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=10, column=0, sticky="w", pady=(18, 0))
-        ttk.Button(frame, text="Save settings", style="Primary.TButton", command=save).grid(row=10, column=1, columnspan=2, sticky="e", pady=(18, 0))
+            self._apply_theme()
+        ttk.Button(frame, text="Spotify dashboard", style="Secondary.TButton", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=12, column=0, sticky="w", pady=(18, 0))
+        ttk.Button(frame, text="Save settings", style="Primary.TButton", command=save).grid(row=12, column=1, columnspan=2, sticky="e", pady=(18, 0))
 
     def _set_busy(self, busy: bool) -> None:
         self.preview_button.configure(state="disabled" if busy else "normal")
