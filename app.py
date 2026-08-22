@@ -25,6 +25,12 @@ SPOTIFY_PLAYLIST_RE = re.compile(r"(?:open\.spotify\.com/playlist/|spotify:playl
 SPOTIFY_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 
+def resource_path(relative_path: str) -> Path:
+    """Resolve an asset in source runs and future bundled application builds."""
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return bundle_root / relative_path
+
+
 @dataclass
 class Track:
     title: str
@@ -332,8 +338,12 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("860x650")
-        self.minsize(720, 540)
+        self.geometry("980x720")
+        self.minsize(820, 620)
+        self.configure(background="#F4F6FA")
+        self.window_logo = tk.PhotoImage(file=str(resource_path("assets/playlist-porter-logo.png")))
+        self.header_logo = self.window_logo.subsample(16, 16)
+        self.iconphoto(True, self.window_logo)
         self.settings = Settings()
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.cancel_event = threading.Event()
@@ -345,43 +355,106 @@ class App(tk.Tk):
 
     def _build_ui(self) -> None:
         style = ttk.Style(self)
-        style.configure("Title.TLabel", font=("Segoe UI", 22, "bold"))
-        style.configure("Sub.TLabel", foreground="#555555")
-        outer = ttk.Frame(self, padding=28)
+        style.theme_use("clam")
+        self.option_add("*Font", ("Segoe UI", 10))
+        style.configure("App.TFrame", background="#F4F6FA")
+        style.configure("Card.TFrame", background="#FFFFFF", relief="flat")
+        style.configure("Title.TLabel", background="#F4F6FA", foreground="#151B2B", font=("Segoe UI Semibold", 26))
+        style.configure("Subtitle.TLabel", background="#F4F6FA", foreground="#65708A", font=("Segoe UI", 10))
+        style.configure("CardTitle.TLabel", background="#FFFFFF", foreground="#20283A", font=("Segoe UI Semibold", 11))
+        style.configure("CardText.TLabel", background="#FFFFFF", foreground="#65708A")
+        style.configure("Status.TLabel", background="#FFFFFF", foreground="#4C5872", font=("Segoe UI Semibold", 9))
+        style.configure("Hint.TLabel", background="#F4F6FA", foreground="#7B8499", font=("Segoe UI", 9))
+        style.configure("TEntry", fieldbackground="#F8FAFD", foreground="#20283A", bordercolor="#D8DEEA", lightcolor="#D8DEEA", darkcolor="#D8DEEA", padding=10)
+        style.configure("TCombobox", fieldbackground="#F8FAFD", padding=7)
+        style.configure("Primary.TButton", background="#625BF6", foreground="#FFFFFF", borderwidth=0, padding=(18, 10), font=("Segoe UI Semibold", 10))
+        style.map("Primary.TButton", background=[("active", "#5048E5"), ("disabled", "#B9B6E9")], foreground=[("disabled", "#F2F1FA")])
+        style.configure("Secondary.TButton", background="#EEF0F7", foreground="#384158", borderwidth=0, padding=(14, 9), font=("Segoe UI Semibold", 9))
+        style.map("Secondary.TButton", background=[("active", "#E2E5EF")])
+        style.configure("Danger.TButton", background="#FFF0F0", foreground="#C43D4B", borderwidth=0, padding=(14, 9), font=("Segoe UI Semibold", 9))
+        style.map("Danger.TButton", background=[("active", "#FFE1E3"), ("disabled", "#F4F4F6")], foreground=[("disabled", "#A8ACB6")])
+        style.configure("Modern.Horizontal.TProgressbar", troughcolor="#E9ECF4", background="#625BF6", borderwidth=0, thickness=5)
+        style.configure("Treeview", background="#FFFFFF", fieldbackground="#FFFFFF", foreground="#2A3246", rowheight=34, borderwidth=0, font=("Segoe UI", 10))
+        style.configure("Treeview.Heading", background="#F7F8FC", foreground="#68728A", borderwidth=0, padding=(8, 9), font=("Segoe UI Semibold", 9))
+        style.map("Treeview", background=[("selected", "#EDEBFF")], foreground=[("selected", "#302A8C")])
+
+        outer = ttk.Frame(self, padding=(34, 26, 34, 22), style="App.TFrame")
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="Playlist Porter", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(outer, text="Turn an accessible playlist into an organized local MP3 folder.", style="Sub.TLabel").pack(anchor="w", pady=(2, 22))
-        link_row = ttk.Frame(outer)
+
+        header = ttk.Frame(outer, style="App.TFrame")
+        header.pack(fill="x", pady=(0, 20))
+        tk.Label(header, image=self.header_logo, background="#F4F6FA", borderwidth=0).pack(side="left", padx=(0, 14), anchor="n")
+        brand = ttk.Frame(header, style="App.TFrame")
+        brand.pack(side="left", fill="x", expand=True)
+        ttk.Label(brand, text="Playlist Porter", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(brand, text="Your playlists, organized as local MP3 folders.", style="Subtitle.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Button(header, text="Settings", style="Secondary.TButton", command=self.open_settings).pack(side="right", anchor="n", pady=4)
+
+        source_card = ttk.Frame(outer, padding=18, style="Card.TFrame")
+        source_card.pack(fill="x", pady=(0, 12))
+        ttk.Label(source_card, text="PLAYLIST LINK", style="CardTitle.TLabel").pack(anchor="w", pady=(0, 9))
+        link_row = ttk.Frame(source_card, style="Card.TFrame")
         link_row.pack(fill="x")
         self.url = tk.StringVar()
         self.url_entry = ttk.Entry(link_row, textvariable=self.url)
         self.url_entry.pack(side="left", fill="x", expand=True)
-        self.preview_button = ttk.Button(link_row, text="Preview playlist", command=self.preview)
+        self.url_entry.bind("<Return>", lambda _: self.preview())
+        self.preview_button = ttk.Button(link_row, text="Preview playlist", style="Primary.TButton", command=self.preview)
         self.preview_button.pack(side="left", padx=(10, 0))
-        destination_row = ttk.Frame(outer)
-        destination_row.pack(fill="x", pady=14)
+
+        destination_card = ttk.Frame(outer, padding=(18, 14), style="Card.TFrame")
+        destination_card.pack(fill="x", pady=(0, 12))
+        destination_row = ttk.Frame(destination_card, style="Card.TFrame")
+        destination_row.pack(fill="x")
+        destination_copy = ttk.Frame(destination_row, style="Card.TFrame")
+        destination_copy.pack(side="left", fill="x", expand=True)
+        ttk.Label(destination_copy, text="SAVE LOCATION", style="CardTitle.TLabel").pack(anchor="w")
         self.destination_text = tk.StringVar(value=self.settings.destination or "Choose a destination folder")
-        ttk.Label(destination_row, textvariable=self.destination_text).pack(side="left", fill="x", expand=True)
-        ttk.Button(destination_row, text="Change folder", command=self.choose_destination).pack(side="right")
-        ttk.Button(destination_row, text="Settings", command=self.open_settings).pack(side="right", padx=8)
+        ttk.Label(destination_copy, textvariable=self.destination_text, style="CardText.TLabel").pack(anchor="w", pady=(3, 0))
+        ttk.Button(destination_row, text="Choose folder", style="Secondary.TButton", command=self.choose_destination).pack(side="right")
+
+        library_card = ttk.Frame(outer, padding=(18, 14, 18, 16), style="Card.TFrame")
+        library_card.pack(fill="both", expand=True)
+        library_header = ttk.Frame(library_card, style="Card.TFrame")
+        library_header.pack(fill="x", pady=(0, 10))
+        heading_copy = ttk.Frame(library_header, style="Card.TFrame")
+        heading_copy.pack(side="left", fill="x", expand=True)
+        ttk.Label(heading_copy, text="PLAYLIST PREVIEW", style="CardTitle.TLabel").pack(anchor="w")
         self.summary = tk.StringVar(value="Paste a YouTube playlist or a Spotify playlist you own or collaborate on.")
-        ttk.Label(outer, textvariable=self.summary, wraplength=760).pack(anchor="w", pady=(4, 8))
-        list_frame = ttk.Frame(outer)
+        ttk.Label(heading_copy, textvariable=self.summary, style="CardText.TLabel", wraplength=700).pack(anchor="w", pady=(3, 0))
+        self.source_badge = tk.Label(library_header, text="  WAITING  ", bg="#EEF0F7", fg="#65708A", font=("Segoe UI Semibold", 8), padx=5, pady=4)
+        self.source_badge.pack(side="right", anchor="n")
+
+        list_frame = ttk.Frame(library_card, style="Card.TFrame")
         list_frame.pack(fill="both", expand=True)
-        self.track_list = tk.Listbox(list_frame, borderwidth=0, highlightthickness=1, activestyle="none")
+        self.track_list = ttk.Treeview(list_frame, columns=("number", "title", "artist"), show="headings", selectmode="browse")
+        self.track_list.heading("number", text="#")
+        self.track_list.heading("title", text="TRACK")
+        self.track_list.heading("artist", text="ARTIST / SOURCE")
+        self.track_list.column("number", width=52, minwidth=52, stretch=False, anchor="center")
+        self.track_list.column("title", width=390, minwidth=220)
+        self.track_list.column("artist", width=300, minwidth=180)
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.track_list.yview)
         self.track_list.configure(yscrollcommand=scrollbar.set)
         self.track_list.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        bottom = ttk.Frame(outer)
-        bottom.pack(fill="x", pady=(14, 0))
+
+        progress_row = ttk.Frame(library_card, style="Card.TFrame")
+        progress_row.pack(fill="x", pady=(12, 0))
         self.status_text = tk.StringVar(value="Ready")
-        ttk.Label(bottom, textvariable=self.status_text).pack(side="left", fill="x", expand=True)
-        self.download_button = ttk.Button(bottom, text="Create MP3 folder", command=self.start_download, state="disabled")
+        ttk.Label(progress_row, textvariable=self.status_text, style="Status.TLabel").pack(side="left", fill="x", expand=True)
+        self.progress = ttk.Progressbar(library_card, mode="indeterminate", style="Modern.Horizontal.TProgressbar")
+        self.progress.pack(fill="x", pady=(8, 0))
+
+        actions = ttk.Frame(outer, style="App.TFrame")
+        actions.pack(fill="x", pady=(14, 0))
+        ttk.Label(actions, text="Download only media you own or have permission to save.", style="Hint.TLabel").pack(side="left", anchor="center")
+        self.download_button = ttk.Button(actions, text="Create MP3 folder", style="Primary.TButton", command=self.start_download, state="disabled")
         self.download_button.pack(side="right")
-        self.stop_button = ttk.Button(bottom, text="Stop", command=self.stop_download, state="disabled")
-        self.stop_button.pack(side="right", padx=(0, 8))
-        ttk.Label(outer, text="Only download media you own or have permission to save. Spotify links provide metadata; audio matches come from YouTube.", style="Sub.TLabel", wraplength=800).pack(anchor="w", pady=(14, 0))
+        self.stop_button = ttk.Button(actions, text="Stop conversion", style="Danger.TButton", command=self.stop_download, state="disabled")
+        self.stop_button.pack(side="right", padx=(0, 10))
+
+        self.url_entry.focus_set()
 
     def _first_run(self) -> None:
         messagebox.showinfo(APP_NAME, "Choose where playlist folders should be saved. You can change this later.")
@@ -397,33 +470,36 @@ class App(tk.Tk):
     def open_settings(self) -> None:
         dialog = tk.Toplevel(self)
         dialog.title("Settings")
+        dialog.configure(background="#F4F6FA")
+        dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
-        frame = ttk.Frame(dialog, padding=22)
+        frame = ttk.Frame(dialog, padding=26, style="Card.TFrame")
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Spotify API credentials", font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(frame, text=f"Needed only for Spotify playlists. Register {SPOTIFY_REDIRECT_URI} as the Redirect URI.", wraplength=480).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 14))
+        frame.columnconfigure(1, weight=1)
+        ttk.Label(frame, text="Spotify connection", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, text=f"For Spotify playlists, register {SPOTIFY_REDIRECT_URI} as the Redirect URI.", style="CardText.TLabel", wraplength=520).grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 14))
         client_id = tk.StringVar(value=self.settings.spotify_client_id)
         secret = tk.StringVar(value=self.settings.spotify_client_secret)
         cookie_file = tk.StringVar(value=self.settings.youtube_cookie_file)
         cookie_browser = tk.StringVar(value=self.settings.youtube_cookie_browser or "None")
-        ttk.Label(frame, text="Client ID").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="Client ID", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=client_id, width=48).grid(row=2, column=1, pady=5)
-        ttk.Label(frame, text="Client Secret").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="Client Secret", style="CardText.TLabel").grid(row=3, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=secret, show="•", width=48).grid(row=3, column=1, pady=5)
         ttk.Separator(frame).grid(row=4, column=0, columnspan=3, sticky="ew", pady=16)
-        ttk.Label(frame, text="YouTube sign-in for restricted videos", font=("Segoe UI", 14, "bold")).grid(row=5, column=0, columnspan=3, sticky="w")
-        ttk.Label(frame, text="Optional. A cookies.txt file is most reliable. Browser access reads cookies only while yt-dlp is running; Firefox is recommended on Windows.", wraplength=520).grid(row=6, column=0, columnspan=3, sticky="w", pady=(2, 12))
-        ttk.Label(frame, text="Cookies file").grid(row=7, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="YouTube sign-in", style="CardTitle.TLabel").grid(row=5, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, text="Optional for restricted videos. A cookies.txt file is most reliable; Firefox is the preferred browser option on Windows.", style="CardText.TLabel", wraplength=520).grid(row=6, column=0, columnspan=3, sticky="w", pady=(3, 12))
+        ttk.Label(frame, text="Cookies file", style="CardText.TLabel").grid(row=7, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=cookie_file, width=42).grid(row=7, column=1, sticky="ew", pady=5)
         def choose_cookie_file() -> None:
             selected = filedialog.askopenfilename(parent=dialog, title="Choose a YouTube cookies file", filetypes=[("Cookies text files", "*.txt"), ("All files", "*.*")])
             if selected:
                 cookie_file.set(selected)
-        ttk.Button(frame, text="Browse", command=choose_cookie_file).grid(row=7, column=2, padx=(8, 0), pady=5)
-        ttk.Label(frame, text="Or browser").grid(row=8, column=0, sticky="w", pady=5)
+        ttk.Button(frame, text="Browse", style="Secondary.TButton", command=choose_cookie_file).grid(row=7, column=2, padx=(8, 0), pady=5)
+        ttk.Label(frame, text="Or browser", style="CardText.TLabel").grid(row=8, column=0, sticky="w", pady=5)
         ttk.Combobox(frame, textvariable=cookie_browser, values=("None", "Firefox", "Chrome", "Edge", "Brave"), state="readonly", width=39).grid(row=8, column=1, sticky="w", pady=5)
-        ttk.Label(frame, text="The browser must be signed into YouTube. Close Chromium browsers completely before conversion if cookie access fails.", wraplength=520).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Label(frame, text="The browser must be signed into YouTube. Close Chromium browsers completely if cookie access fails.", style="CardText.TLabel", wraplength=520).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         def save() -> None:
             credentials_changed = (client_id.get().strip() != self.settings.spotify_client_id or secret.get().strip() != self.settings.spotify_client_secret)
@@ -436,12 +512,16 @@ class App(tk.Tk):
                 self.settings.spotify_refresh_token = ""
             self.settings.save()
             dialog.destroy()
-        ttk.Button(frame, text="Open Spotify Developer Dashboard", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=10, column=0, sticky="w", pady=(18, 0))
-        ttk.Button(frame, text="Save", command=save).grid(row=10, column=1, columnspan=2, sticky="e", pady=(18, 0))
+        ttk.Button(frame, text="Spotify dashboard", style="Secondary.TButton", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=10, column=0, sticky="w", pady=(18, 0))
+        ttk.Button(frame, text="Save settings", style="Primary.TButton", command=save).grid(row=10, column=1, columnspan=2, sticky="e", pady=(18, 0))
 
     def _set_busy(self, busy: bool) -> None:
         self.preview_button.configure(state="disabled" if busy else "normal")
         self.download_button.configure(state="disabled" if busy or not self.playlist else "normal")
+        if busy:
+            self.progress.start(12)
+        else:
+            self.progress.stop()
         if not busy:
             self.stop_button.configure(state="disabled")
 
@@ -497,11 +577,14 @@ class App(tk.Tk):
                     messagebox.showerror(APP_NAME, str(payload))
                 elif event == "previewed":
                     self.playlist = payload  # type: ignore[assignment]
-                    self.track_list.delete(0, "end")
+                    self.track_list.delete(*self.track_list.get_children())
                     for index, track in enumerate(self.playlist.tracks, 1):
-                        self.track_list.insert("end", f"{index:03d}  {track.search_text}")
+                        self.track_list.insert("", "end", values=(f"{index:02d}", track.title, track.artist or self.playlist.source))
                     folder = safe_folder_name(self.playlist.name)
                     self.summary.set(f"{self.playlist.name} · {len(self.playlist.tracks)} tracks · Folder: {folder}")
+                    badge_color = "#E9FFF3" if self.playlist.source == "Spotify" else "#FFF1F1"
+                    badge_text = "#168A52" if self.playlist.source == "Spotify" else "#C43D4B"
+                    self.source_badge.configure(text=f"  {self.playlist.source.upper()}  ", bg=badge_color, fg=badge_text)
                     self.status_text.set("Playlist ready")
                     self._set_busy(False)
                 elif event == "downloaded":
