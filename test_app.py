@@ -27,6 +27,13 @@ class AppHelpersTests(unittest.TestCase):
         self.assertTrue(options['js_runtimes']['deno']['path'].lower().endswith('deno.exe'))
         self.assertTrue(options['quiet'])
 
+    def test_youtube_options_use_selected_browser_cookies(self):
+        settings = Settings()
+        settings.youtube_cookie_file = ''
+        settings.youtube_cookie_browser = 'firefox'
+        options = youtube_options(settings)
+        self.assertEqual(options['cookiesfrombrowser'], ('firefox', None, None, None))
+
     def test_download_can_stop_before_first_track(self):
         cancel_event = threading.Event()
         cancel_event.set()

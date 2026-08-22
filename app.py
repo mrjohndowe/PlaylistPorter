@@ -76,12 +76,31 @@ def deno_executable() -> Path:
     raise RuntimeError("The Deno JavaScript runtime is missing. Close the app and run launch.ps1 again to install it.")
 
 
-def youtube_options(**overrides: object) -> dict[str, object]:
+def youtube_options(settings: "Settings | None" = None, **overrides: object) -> dict[str, object]:
     options: dict[str, object] = {
         "js_runtimes": {"deno": {"path": str(deno_executable())}},
     }
+    if settings and settings.youtube_cookie_file:
+        cookie_file = Path(settings.youtube_cookie_file)
+        if not cookie_file.is_file():
+            raise ValueError("The YouTube cookies file selected in Settings no longer exists.")
+        options["cookiefile"] = str(cookie_file)
+    elif settings and settings.youtube_cookie_browser:
+        options["cookiesfrombrowser"] = (settings.youtube_cookie_browser, None, None, None)
     options.update(overrides)
     return options
+
+
+def friendly_error(value: object) -> str:
+    message = str(value)
+    if "Sign in to confirm your age" in message or "age-restricted" in message.lower():
+        return (
+            "This YouTube video is age-restricted. Open Settings and select a YouTube cookies file "
+            "or a signed-in browser. Firefox is the most reliable browser-cookie option on Windows."
+        )
+    if "Could not copy Chrome cookie database" in message or "Permission denied" in message and "cookie" in message.lower():
+        return "Could not read browser cookies. Close the selected browser completely and try again, or select a cookies.txt file in Settings."
+    return message
 
 
 class Settings:
@@ -90,6 +109,8 @@ class Settings:
         self.spotify_client_id = ""
         self.spotify_client_secret = ""
         self.spotify_refresh_token = ""
+        self.youtube_cookie_file = ""
+        self.youtube_cookie_browser = ""
         self.load()
 
     def load(self) -> None:
@@ -99,6 +120,8 @@ class Settings:
             self.spotify_client_id = data.get("spotify_client_id", "")
             self.spotify_client_secret = data.get("spotify_client_secret", "")
             self.spotify_refresh_token = data.get("spotify_refresh_token", "")
+            self.youtube_cookie_file = data.get("youtube_cookie_file", "")
+            self.youtube_cookie_browser = data.get("youtube_cookie_browser", "")
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
 
@@ -120,7 +143,7 @@ class PlaylistService:
         import yt_dlp
 
         self.status("Reading the YouTube playlist…")
-        options = youtube_options(quiet=True, extract_flat=True, skip_download=True, ignoreerrors=True)
+        options = youtube_options(self.settings, quiet=True, extract_flat=True, skip_download=True, ignoreerrors=True)
         with yt_dlp.YoutubeDL(options) as downloader:
             info = downloader.extract_info(url, download=False)
         entries = [entry for entry in (info.get("entries") or []) if entry]
@@ -278,7 +301,7 @@ class PlaylistService:
             self.status(f"Downloading {index} of {total}: {track.search_text}")
             target = str(folder / f"{index:03d} - %(title)s.%(ext)s")
             source = track.source_url or f"ytsearch1:{track.search_text} official audio"
-            options = youtube_options(**{
+            options = youtube_options(self.settings, **{
                 "format": "bestaudio/best", "outtmpl": target, "quiet": True, "noplaylist": True,
                 "ignoreerrors": False, "ffmpeg_location": ffmpeg,
                 "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
@@ -296,7 +319,7 @@ class PlaylistService:
                 if cancel_event.is_set():
                     cancelled = True
                     break
-                failures.append(f"{track.search_text}: {exc}")
+                failures.append(f"{track.search_text}: {friendly_error(exc)}")
         (folder / "playlist-info.json").write_text(json.dumps({
             "name": playlist.name, "source": playlist.source,
             "tracks": [track.__dict__ for track in playlist.tracks], "failures": failures,
@@ -382,20 +405,39 @@ class App(tk.Tk):
         ttk.Label(frame, text=f"Needed only for Spotify playlists. Register {SPOTIFY_REDIRECT_URI} as the Redirect URI.", wraplength=480).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 14))
         client_id = tk.StringVar(value=self.settings.spotify_client_id)
         secret = tk.StringVar(value=self.settings.spotify_client_secret)
+        cookie_file = tk.StringVar(value=self.settings.youtube_cookie_file)
+        cookie_browser = tk.StringVar(value=self.settings.youtube_cookie_browser or "None")
         ttk.Label(frame, text="Client ID").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=client_id, width=48).grid(row=2, column=1, pady=5)
         ttk.Label(frame, text="Client Secret").grid(row=3, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=secret, show="•", width=48).grid(row=3, column=1, pady=5)
+        ttk.Separator(frame).grid(row=4, column=0, columnspan=3, sticky="ew", pady=16)
+        ttk.Label(frame, text="YouTube sign-in for restricted videos", font=("Segoe UI", 14, "bold")).grid(row=5, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, text="Optional. A cookies.txt file is most reliable. Browser access reads cookies only while yt-dlp is running; Firefox is recommended on Windows.", wraplength=520).grid(row=6, column=0, columnspan=3, sticky="w", pady=(2, 12))
+        ttk.Label(frame, text="Cookies file").grid(row=7, column=0, sticky="w", pady=5)
+        ttk.Entry(frame, textvariable=cookie_file, width=42).grid(row=7, column=1, sticky="ew", pady=5)
+        def choose_cookie_file() -> None:
+            selected = filedialog.askopenfilename(parent=dialog, title="Choose a YouTube cookies file", filetypes=[("Cookies text files", "*.txt"), ("All files", "*.*")])
+            if selected:
+                cookie_file.set(selected)
+        ttk.Button(frame, text="Browse", command=choose_cookie_file).grid(row=7, column=2, padx=(8, 0), pady=5)
+        ttk.Label(frame, text="Or browser").grid(row=8, column=0, sticky="w", pady=5)
+        ttk.Combobox(frame, textvariable=cookie_browser, values=("None", "Firefox", "Chrome", "Edge", "Brave"), state="readonly", width=39).grid(row=8, column=1, sticky="w", pady=5)
+        ttk.Label(frame, text="The browser must be signed into YouTube. Close Chromium browsers completely before conversion if cookie access fails.", wraplength=520).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
         def save() -> None:
             credentials_changed = (client_id.get().strip() != self.settings.spotify_client_id or secret.get().strip() != self.settings.spotify_client_secret)
             self.settings.spotify_client_id = client_id.get().strip()
             self.settings.spotify_client_secret = secret.get().strip()
+            self.settings.youtube_cookie_file = cookie_file.get().strip()
+            selected_browser = cookie_browser.get().strip().lower()
+            self.settings.youtube_cookie_browser = "" if selected_browser == "none" else selected_browser
             if credentials_changed:
                 self.settings.spotify_refresh_token = ""
             self.settings.save()
             dialog.destroy()
-        ttk.Button(frame, text="Open Spotify Developer Dashboard", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=4, column=0, sticky="w", pady=(14, 0))
-        ttk.Button(frame, text="Save", command=save).grid(row=4, column=1, sticky="e", pady=(14, 0))
+        ttk.Button(frame, text="Open Spotify Developer Dashboard", command=lambda: webbrowser.open("https://developer.spotify.com/dashboard")).grid(row=10, column=0, sticky="w", pady=(18, 0))
+        ttk.Button(frame, text="Save", command=save).grid(row=10, column=1, columnspan=2, sticky="e", pady=(18, 0))
 
     def _set_busy(self, busy: bool) -> None:
         self.preview_button.configure(state="disabled" if busy else "normal")
@@ -409,7 +451,7 @@ class App(tk.Tk):
             try:
                 self.events.put((event, operation()))
             except Exception as exc:
-                self.events.put(("error", str(exc)))
+                self.events.put(("error", friendly_error(exc)))
         threading.Thread(target=worker, daemon=True).start()
 
     def _status(self, text: str) -> None:
