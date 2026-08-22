@@ -72,3 +72,7 @@ To build version `1.0.0` locally, install Inno Setup 6 and run:
 ```
 
 The resulting installer and checksum are written to `installer\output`. The installer is not Authenticode-signed; Windows will not show a verified publisher until the project adopts a trusted code-signing certificate and signs the final installer before release.
+
+## Automatic updates
+
+Installed builds check the repository's latest GitHub Release shortly after startup when automatic updates are enabled. Playlist Porter compares semantic versions, offers a newer release, downloads the matching installer and `.sha256` file, verifies the installer with SHA-256, and only then launches the silent update and closes the running app. Settings includes both a persistent automatic-update toggle and a manual **Check for updates** action. Development/source runs do not perform automatic startup checks.

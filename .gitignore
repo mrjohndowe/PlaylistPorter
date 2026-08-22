@@ -8,3 +8,4 @@ dist/
 !PlaylistPorter.spec
 .pytest_cache/
 installer/output/
+build_version.py

@@ -54,7 +54,10 @@ jobs:
         run: python -m unittest -v
 
       - name: Create Windows icon
-        run: python scripts/create_icon.py
+        shell: pwsh
+        run: |
+          "APP_VERSION = `"$env:APP_VERSION`"" | Set-Content -Encoding utf8 build_version.py
+          python scripts/create_icon.py
 
       - name: Build standalone application
         run: python -m PyInstaller --noconfirm --clean PlaylistPorter.spec

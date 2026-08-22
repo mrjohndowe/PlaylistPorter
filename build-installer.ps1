@@ -13,6 +13,7 @@ if (-not (Test-Path $python)) {
 
 & $python -m pip install -r (Join-Path $projectDirectory "requirements.txt") -r (Join-Path $projectDirectory "requirements-build.txt")
 & $python -m unittest -v
+"APP_VERSION = `"$Version`"" | Set-Content -Encoding utf8 (Join-Path $projectDirectory "build_version.py")
 & $python (Join-Path $projectDirectory "scripts\create_icon.py")
 & $python -m PyInstaller --noconfirm --clean (Join-Path $projectDirectory "PlaylistPorter.spec")
 
@@ -32,4 +33,3 @@ $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $installer
 
 Write-Host "Installer created: $installer"
 Write-Host "Checksum created: $installer.sha256"
-
