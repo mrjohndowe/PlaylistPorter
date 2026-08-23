@@ -55,8 +55,14 @@ jobs:
 
       - name: Create Windows icon
         shell: pwsh
+        env:
+          SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:SPOTIFY_CLIENT_ID) -or $env:SPOTIFY_CLIENT_ID -notmatch '^[A-Za-z0-9]+$') {
+            throw "Set the repository Actions variable SPOTIFY_CLIENT_ID before publishing an installer. Never use a Client Secret here."
+          }
           "APP_VERSION = `"$env:APP_VERSION`"" | Set-Content -Encoding utf8 build_version.py
+          "SPOTIFY_CLIENT_ID = `"$env:SPOTIFY_CLIENT_ID`"" | Set-Content -Encoding utf8 build_config.py
           python scripts/create_icon.py
 
       - name: Build standalone application

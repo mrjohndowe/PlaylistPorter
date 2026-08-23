@@ -9,3 +9,4 @@ dist/
 .pytest_cache/
 installer/output/
 build_version.py
+build_config.py

@@ -1,6 +1,7 @@
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = "0.1.0"
+    [string]$Version = "0.1.0",
+    [string]$SpotifyClientId = $env:PLAYLIST_PORTER_SPOTIFY_CLIENT_ID
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +14,11 @@ if (-not (Test-Path $python)) {
 
 & $python -m pip install -r (Join-Path $projectDirectory "requirements.txt") -r (Join-Path $projectDirectory "requirements-build.txt")
 & $python -m unittest -v
+if ([string]::IsNullOrWhiteSpace($SpotifyClientId) -or $SpotifyClientId -notmatch '^[A-Za-z0-9]+$') {
+    throw "Provide -SpotifyClientId or set PLAYLIST_PORTER_SPOTIFY_CLIENT_ID before building a public installer. Client IDs are public; never provide a Client Secret."
+}
 "APP_VERSION = `"$Version`"" | Set-Content -Encoding utf8 (Join-Path $projectDirectory "build_version.py")
+"SPOTIFY_CLIENT_ID = `"$SpotifyClientId`"" | Set-Content -Encoding utf8 (Join-Path $projectDirectory "build_config.py")
 & $python (Join-Path $projectDirectory "scripts\create_icon.py")
 & $python -m PyInstaller --noconfirm --clean (Join-Path $projectDirectory "PlaylistPorter.spec")
 

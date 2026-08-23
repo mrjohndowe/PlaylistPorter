@@ -30,15 +30,11 @@ The first launch creates a local `.venv` and installs the three dependencies. La
 
 ## Spotify setup
 
-YouTube playlists require no account setup. For Spotify playlists:
+YouTube playlists require no account setup. Official Playlist Porter installers include the public Spotify Client ID, so an approved user only needs to preview a Spotify playlist and sign into their own Spotify account. Playlist Porter uses Spotify's Authorization Code with PKCE flow; a Client Secret is neither required nor stored in the application.
 
-1. Create an app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
-2. Add `http://127.0.0.1:8888/callback` as the app's Redirect URI.
-3. Copy its Client ID and Client Secret.
-4. In Playlist Porter, open **Settings**, paste both values, and save.
-5. Preview a Spotify playlist and approve the browser sign-in. The app remembers a refresh token so later previews normally do not require another sign-in.
+Custom source builds can enter a Client ID override in **Settings**. Register `http://127.0.0.1:8888/callback` as the app's Redirect URI. The Spotify refresh token is stored for the current Windows user in `%APPDATA%\PlaylistPorter\settings.json` and is never added to this repository.
 
-Credentials and the Spotify refresh token are stored for the current Windows user in `%APPDATA%\PlaylistPorter\settings.json`. They are never added to this repository. Spotify may require the signed-in account to be allowlisted in the app's Development Mode user management. Refer to the dashboard if an authorized account still cannot access its own playlist.
+Spotify platform limits still apply. Development Mode apps require allowlisted users and currently expose playlist contents only for playlists the signed-in user owns or collaborates on. Making Spotify access broadly available requires Spotify approval for Extended Quota Mode; it cannot be achieved by embedding credentials. YouTube conversion remains available without Spotify credentials. Only download media you own or have permission to save.
 
 ## Age-restricted YouTube videos
 
@@ -64,14 +60,14 @@ Every semantic version tag such as `v1.0.0` triggers `.github/workflows/release.
 
 The installer uses a per-user destination under `%LOCALAPPDATA%\Programs\Playlist Porter`, does not require administrator rights by default, creates a Start Menu shortcut, offers an optional desktop shortcut, and registers an uninstaller. The package includes Python, Deno, FFmpeg, yt-dlp, EJS challenge scripts, and the application logo; end users do not need to install those components separately.
 
-To build version `1.0.0` locally, install Inno Setup 6 and run:
+To build version `1.0.0` locally, install Inno Setup 6 and provide the public Spotify Client ID. Never provide a Client Secret:
 
 ```powershell
-.\build-installer.ps1 -Version 1.0.0
+.\build-installer.ps1 -Version 1.0.0 -SpotifyClientId 'YOUR_PUBLIC_CLIENT_ID'
 
 ```
 
-The resulting installer and checksum are written to `installer\output`. The installer is not Authenticode-signed; Windows will not show a verified publisher until the project adopts a trusted code-signing certificate and signs the final installer before release.
+For GitHub releases, set the repository Actions variable `SPOTIFY_CLIENT_ID` before pushing a version tag. The public Client ID is embedded in the packaged application through the ignored generated `build_config.py`; no Client Secret is used. The resulting installer and checksum are written to `installer\output`. The installer is not Authenticode-signed; Windows will not show a verified publisher until the project adopts a trusted code-signing certificate and signs the final installer before release.
 
 ## Automatic updates
 

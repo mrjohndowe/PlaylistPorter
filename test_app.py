@@ -2,9 +2,9 @@ import unittest
 import threading
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, deno_executable, download_percent, is_youtube_cookie_domain, safe_folder_name, track_progress_text, youtube_options
+from app import Playlist, PlaylistService, Settings, Track, browser_cookie_spec, browser_display_name, classify_url, deno_executable, download_percent, is_youtube_cookie_domain, pkce_code_challenge, safe_folder_name, track_progress_text, youtube_options
 from updates import REPOSITORY, is_newer_version, release_from_payload, version_tuple
 
 
@@ -70,6 +70,25 @@ class AppHelpersTests(unittest.TestCase):
         self.assertEqual(track_progress_text(100.0, 'complete'), '██████████ 100%')
         self.assertIn('Converting', track_progress_text(95.0, 'converting'))
         self.assertEqual(track_progress_text(0.0, 'failed'), 'Failed')
+
+    def test_spotify_pkce_challenge_matches_rfc_example(self):
+        verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+        self.assertEqual(pkce_code_challenge(verifier), 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM')
+
+    def test_settings_do_not_store_a_spotify_client_secret(self):
+        self.assertNotIn('spotify_client_secret', Settings().__dict__)
+
+    def test_spotify_refresh_uses_pkce_client_id_without_secret(self):
+        settings = Settings()
+        settings.spotify_client_id = 'publicclientid'
+        settings.spotify_refresh_token = 'user-refresh-token'
+        response = MagicMock(status_code=200)
+        response.json.return_value = {'access_token': 'access-token'}
+        with patch('requests.post', return_value=response) as post:
+            token = PlaylistService(settings, lambda _: None)._spotify_token()
+        self.assertEqual(token, 'access-token')
+        self.assertNotIn('auth', post.call_args.kwargs)
+        self.assertEqual(post.call_args.kwargs['data']['client_id'], 'publicclientid')
 
     def test_settings_dark_mode_defaults_to_boolean(self):
         self.assertIsInstance(Settings().dark_mode, bool)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import queue
@@ -22,6 +23,11 @@ try:
     from build_version import APP_VERSION
 except ImportError:
     from version import APP_VERSION
+
+try:
+    from build_config import SPOTIFY_CLIENT_ID as EMBEDDED_SPOTIFY_CLIENT_ID
+except ImportError:
+    EMBEDDED_SPOTIFY_CLIENT_ID = ""
 
 from updates import ReleaseInfo, download_verified_installer, is_newer_version, latest_release
 
@@ -141,6 +147,11 @@ def track_progress_text(percent: float, state: str = "downloading") -> str:
     return f"{'█' * filled}{'░' * (10 - filled)} {bounded:3.0f}%"
 
 
+def pkce_code_challenge(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
 def is_youtube_cookie_domain(domain: str) -> bool:
     normalized = domain.lstrip(".").lower()
     return normalized == "youtube.com" or normalized.endswith(".youtube.com") or normalized == "google.com" or normalized.endswith(".google.com")
@@ -204,8 +215,7 @@ def export_youtube_cookies(browser: str, destination: Path) -> int:
 class Settings:
     def __init__(self) -> None:
         self.destination = ""
-        self.spotify_client_id = ""
-        self.spotify_client_secret = ""
+        self.spotify_client_id = EMBEDDED_SPOTIFY_CLIENT_ID
         self.spotify_refresh_token = ""
         self.youtube_cookie_file = ""
         self.youtube_cookie_browser = ""
@@ -217,8 +227,7 @@ class Settings:
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
             self.destination = data.get("destination", "")
-            self.spotify_client_id = data.get("spotify_client_id", "")
-            self.spotify_client_secret = data.get("spotify_client_secret", "")
+            self.spotify_client_id = data.get("spotify_client_id", "") or EMBEDDED_SPOTIFY_CLIENT_ID
             self.spotify_refresh_token = data.get("spotify_refresh_token", "")
             self.youtube_cookie_file = data.get("youtube_cookie_file", "")
             self.youtube_cookie_browser = data.get("youtube_cookie_browser", "")
@@ -257,8 +266,8 @@ class PlaylistService:
     def _spotify_token(self) -> str:
         import requests
 
-        if not self.settings.spotify_client_id or not self.settings.spotify_client_secret:
-            raise ValueError("Add Spotify Client ID and Client Secret in Settings before using Spotify links.")
+        if not self.settings.spotify_client_id:
+            raise ValueError("This build does not include a Spotify Client ID. Add one in Settings or install an official Playlist Porter release.")
         if self.settings.spotify_refresh_token:
             response = requests.post(
                 "https://accounts.spotify.com/api/token",
@@ -267,7 +276,6 @@ class PlaylistService:
                     "refresh_token": self.settings.spotify_refresh_token,
                     "client_id": self.settings.spotify_client_id,
                 },
-                auth=(self.settings.spotify_client_id, self.settings.spotify_client_secret),
                 timeout=20,
             )
             if response.status_code == 200:
@@ -281,6 +289,8 @@ class PlaylistService:
 
         self.status("Opening Spotify sign-in in your browser…")
         state = secrets.token_urlsafe(24)
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = pkce_code_challenge(code_verifier)
         callback: dict[str, str] = {}
 
         class CallbackHandler(BaseHTTPRequestHandler):
@@ -310,6 +320,8 @@ class PlaylistService:
             "redirect_uri": SPOTIFY_REDIRECT_URI,
             "scope": "playlist-read-private",
             "state": state,
+            "code_challenge_method": "S256",
+            "code_challenge": code_challenge,
             "show_dialog": "true",
         })
         webbrowser.open(authorize_url)
@@ -320,18 +332,18 @@ class PlaylistService:
         if not callback.get("code") or callback.get("state") != state:
             raise ValueError("Spotify sign-in did not complete or the security check failed.")
 
-        raw = f"{self.settings.spotify_client_id}:{self.settings.spotify_client_secret}".encode()
         response = requests.post(
             "https://accounts.spotify.com/api/token",
-            headers={"Authorization": "Basic " + base64.b64encode(raw).decode()},
             data={
                 "grant_type": "authorization_code",
                 "code": callback["code"],
                 "redirect_uri": SPOTIFY_REDIRECT_URI,
+                "client_id": self.settings.spotify_client_id,
+                "code_verifier": code_verifier,
             }, timeout=20,
         )
         if response.status_code != 200:
-            raise ValueError("Spotify could not finish connecting the account. Check the app credentials and Redirect URI.")
+            raise ValueError("Spotify could not finish connecting the account. Check the Client ID, Redirect URI, and app-user access.")
         payload = response.json()
         self.settings.spotify_refresh_token = payload.get("refresh_token", "")
         self.settings.save()
@@ -644,17 +656,24 @@ class App(tk.Tk):
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
         ttk.Label(frame, text="Spotify connection", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Label(frame, text=f"For Spotify playlists, register {SPOTIFY_REDIRECT_URI} as the Redirect URI.", style="CardText.TLabel", wraplength=520).grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 14))
+        spotify_setup_text = (
+            "Spotify sign-in is included with this release. Each person signs into their own Spotify account."
+            if EMBEDDED_SPOTIFY_CLIENT_ID
+            else f"For custom builds, enter a Client ID and register {SPOTIFY_REDIRECT_URI} as its Redirect URI."
+        )
+        ttk.Label(frame, text=spotify_setup_text, style="CardText.TLabel", wraplength=520).grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 14))
         client_id = tk.StringVar(value=self.settings.spotify_client_id)
-        secret = tk.StringVar(value=self.settings.spotify_client_secret)
         cookie_file = tk.StringVar(value=self.settings.youtube_cookie_file)
         cookie_browser = tk.StringVar(value=browser_display_name(self.settings.youtube_cookie_browser) if self.settings.youtube_cookie_browser else "None")
         dark_mode = tk.BooleanVar(value=self.settings.dark_mode)
         automatic_updates = tk.BooleanVar(value=self.settings.automatic_updates)
-        ttk.Label(frame, text="Client ID", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=5)
-        ttk.Entry(frame, textvariable=client_id, width=48).grid(row=2, column=1, pady=5)
-        ttk.Label(frame, text="Client Secret", style="CardText.TLabel").grid(row=3, column=0, sticky="w", pady=5)
-        ttk.Entry(frame, textvariable=secret, show="•", width=48).grid(row=3, column=1, pady=5)
+        if EMBEDDED_SPOTIFY_CLIENT_ID:
+            ttk.Label(frame, text="Spotify access", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=5)
+            ttk.Label(frame, text="Included with this release", style="CardText.TLabel").grid(row=2, column=1, sticky="w", pady=5)
+        else:
+            ttk.Label(frame, text="Client ID override", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=5)
+            ttk.Entry(frame, textvariable=client_id, width=48).grid(row=2, column=1, pady=5)
+        ttk.Label(frame, text="Playlist Porter uses secure PKCE sign-in and never needs a Client Secret.", style="CardText.TLabel", wraplength=520).grid(row=3, column=0, columnspan=3, sticky="w", pady=(3, 5))
         ttk.Separator(frame).grid(row=4, column=0, columnspan=3, sticky="ew", pady=16)
         ttk.Label(frame, text="YouTube sign-in", style="CardTitle.TLabel").grid(row=5, column=0, columnspan=3, sticky="w")
         ttk.Label(frame, text="Optional for restricted videos. A cookies.txt file is most reliable; Firefox is the preferred browser option on Windows.", style="CardText.TLabel", wraplength=520).grid(row=6, column=0, columnspan=3, sticky="w", pady=(3, 12))
@@ -706,9 +725,9 @@ class App(tk.Tk):
         ttk.Checkbutton(frame, text="Automatically check for updates when Playlist Porter starts", variable=automatic_updates, style="Card.TCheckbutton").grid(row=12, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         def save() -> None:
-            credentials_changed = (client_id.get().strip() != self.settings.spotify_client_id or secret.get().strip() != self.settings.spotify_client_secret)
-            self.settings.spotify_client_id = client_id.get().strip()
-            self.settings.spotify_client_secret = secret.get().strip()
+            selected_client_id = client_id.get().strip() or EMBEDDED_SPOTIFY_CLIENT_ID
+            credentials_changed = selected_client_id != self.settings.spotify_client_id
+            self.settings.spotify_client_id = selected_client_id
             self.settings.youtube_cookie_file = cookie_file.get().strip()
             selected_browser = cookie_browser.get().strip().lower().replace(" ", "_")
             self.settings.youtube_cookie_browser = "" if selected_browser == "none" else selected_browser
